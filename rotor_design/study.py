@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import matplotlib
+import matplotlib.ticker
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,6 +20,9 @@ INK = "#0b0b0b"
 INK_SECONDARY = "#52514e"
 GRID = "#e4e3df"
 SURFACE = "#fcfcfb"
+# Categorical slots 1-3 of the reference palette, in fixed order.
+RANK_COLOURS = ("#2a78d6", "#eb6834", "#1baf7a")
+TOP_DESIGNS = len(RANK_COLOURS)
 
 
 def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=None):
@@ -41,6 +45,11 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     _write_csv(results, plots_dir / "probe_bore_fit.csv")
     _plot_max_diameter(results, a, plots_dir / "max_rotor_diameter_vs_rotor_length.png")
 
+    # Feasible Designs first, each group by lowest Sample Heat Load.
+    ranked = sorted(results, key=lambda r: (not r.feasible, r.sample_heat_load_w))
+    _write_rows([{"rank": i + 1, **asdict(r)} for i, r in enumerate(ranked)], plots_dir / "ranked_designs.csv")
+    _plot_profiles(ranked[:TOP_DESIGNS], a, plots_dir / "temperature_profiles_top_designs.png")
+
     if nozzle_sweeps is None:
         nozzle_sweeps = {
             "nozzle_count": a.nozzle_count_sweep,
@@ -62,7 +71,19 @@ def _write_csv(results, path):
     _write_rows([asdict(r) for r in results], path)
 
 
+def _flatten(row):
+    """One CSV row: profile arrays dropped, the heat-load breakdown spread into columns."""
+    flat = {}
+    for key, value in row.items():
+        if key == "sample_heat_load_breakdown_w":
+            flat.update({f"heat_{source}_w": watts for source, watts in value.items()})
+        elif not isinstance(value, tuple):
+            flat[key] = value
+    return flat
+
+
 def _write_rows(rows, path):
+    rows = [_flatten(r) for r in rows]
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()
@@ -145,6 +166,41 @@ def _plot_nozzle_sweep(rows, assumptions, path):
         f"Drive Gas needed at {assumptions.target_spin_rate_hz:g} Hz, "
         f"{assumptions.max_rotor_length_mm:g} mm Rotor (dashed: baseline)",
         color=INK, fontsize=11, x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def _format_watts(watts):
+    return f"{watts * 1e3:.2f} mW" if watts >= 1e-4 else f"{watts * 1e6:.1f} uW"
+
+
+def _plot_profiles(results, assumptions, path):
+    fig, ax = plt.subplots(figsize=(7, 4.2), facecolor=SURFACE)
+    ax.set_facecolor(SURFACE)
+    bath = assumptions.environment_temperature_k
+    delta = assumptions.sample_zone_delta_t_k
+    for i, (r, colour) in enumerate(zip(results, RANK_COLOURS)):
+        status = "" if r.feasible else ", infeasible"
+        rise = np.maximum(np.array(r.temperature_k) - bath, 1e-6)
+        ax.plot(r.z_mm, rise, color=colour, linewidth=2,
+                label=f"#{i + 1}: {r.rotor_length_mm:g} mm Rotor, {_format_watts(r.sample_heat_load_w)}{status}")
+    ax.axhline(delta, color=INK_SECONDARY, linewidth=1, linestyle=":",
+               label=f"Sample Zone limit, {delta:g} K above Bath")
+    ax.set_yscale("log")
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.set_title("Temperature rise above the Bath along the Rotor body, top-ranked Designs",
+                 color=INK, fontsize=11, loc="left")
+    ax.set_xlabel("Distance from Bottom Cap (mm); Turbine Cap at the right end", color=INK_SECONDARY)
+    ax.set_ylabel(f"T - {bath:g} K (K)", color=INK_SECONDARY)
+    ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="upper left")
+    ax.grid(color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(GRID)
+    ax.tick_params(colors=INK_SECONDARY, labelsize=9)
     fig.tight_layout()
     fig.savefig(path, dpi=150, facecolor=SURFACE)
     plt.close(fig)

@@ -38,3 +38,22 @@ def test_study_writes_required_flow_versus_nozzle_geometry(tmp_path):
         assert float(r["spin_rate_hz"]) == 1000.0
 
     assert (tmp_path / "required_flow_vs_nozzle_geometry.png").stat().st_size > 0
+
+
+def test_study_ranks_feasible_designs_by_sample_heat_load_and_plots_profiles(tmp_path):
+    tiny = {"nozzle_count": [4]}
+    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[8.0, 14.0, 17.0, 20.0], nozzle_sweeps=tiny)
+
+    with open(tmp_path / "ranked_designs.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [int(r["rank"]) for r in rows] == [1, 2, 3, 4]
+    feasible = [r for r in rows if r["feasible"] == "True"]
+    loads = [float(r["sample_heat_load_w"]) for r in feasible]
+    assert loads == sorted(loads)
+    # Infeasible Designs (the 8 mm Rotor has too short a Sample Zone) come after every feasible one.
+    flags = [r["feasible"] == "True" for r in rows]
+    assert flags == sorted(flags, reverse=True)
+    assert "8.0" in {r["rotor_length_mm"] for r in rows if r["feasible"] == "False"}
+    assert "heat_turbine_cap_conduction_w" in rows[0]
+
+    assert (tmp_path / "temperature_profiles_top_designs.png").stat().st_size > 0

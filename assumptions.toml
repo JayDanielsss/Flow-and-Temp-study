@@ -14,6 +14,10 @@ nozzle_counts = [1, 2, 3, 4, 6, 8, 12]
 nozzle_throats_mm = [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0]
 nozzle_angles_deg = [0.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0]
 
+[rotor]
+turbine_cap_height_mm = 3.0    # placeholder; part of the Rotor Length, held at Drive Gas temperature
+bottom_cap_thickness_mm = 1.0  # placeholder; solid zirconia
+
 [stator_allowance]
 # Radial, each side of the Rotor
 wall_mm = 1.5
@@ -44,10 +48,18 @@ accommodation_coefficient = 1.0 # placeholder: fully diffuse reflection
 nozzle_count = 4
 nozzle_throat_mm = 0.3
 nozzle_angle_deg = 20.0        # from the rim tangent
+wall_thickness_mm = 0.5        # placeholder Rotor tube wall
+sample_length_mm = 5.0         # Sample packed from the Bottom Cap upward
 
 [thermal]
 sample_zone_delta_t_k = 0.1    # Sample Zone: within this of the bath temperature
 min_sample_zone_mm = 5.0
-max_sample_temperature_k = 1.3 # Sample's hottest point
 bath_cooling_power_w = 0.100
 sample_internal_heat_load_w = 0.0
+sample_conductivity_w_m_k = 0.1   # placeholder, no source yet
+stator_temperature_k = 1.2        # placeholder: Stator held at Bath temperature
+rotor_emissivity = 0.9            # placeholder, no source yet
+windage_heat_to_rotor_fraction = 1.0  # placeholder: all windage heat enters the Rotor (upper bound)
+
+[materials]
+zirconia_conductivity_multiplier = 1.0  # Input Uncertainty range x0.3 to x3

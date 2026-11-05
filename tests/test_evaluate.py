@@ -91,3 +91,52 @@ def test_drive_gas_temperature_defaults_to_10k_and_warmer_gas_needs_less_flow(as
     assert cold.drive_gas_temperature_k == 10.0
     assert warm.drive_gas_temperature_k == 20.0
     assert warm.required_mass_flow_kg_s < cold.required_mass_flow_kg_s
+
+
+HEAT_SOURCES = {"turbine_cap_conduction", "windage", "bearing_friction", "convection", "radiation",
+                "internal_load"}
+
+
+def test_baseline_reports_temperature_profile_sample_zone_and_heat_load(assumptions):
+    results = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    t = results.temperature_k
+    assert len(results.z_mm) == len(t)
+    assert min(t) >= 1.2 - 1e-9
+    # The fin base is the Turbine Cap, held at the Drive Gas temperature.
+    assert t[-1] == pytest.approx(10.0)
+    assert 5.0 <= results.sample_zone_mm <= 20.0
+    assert results.sample_hottest_temperature_k <= 1.3
+    assert set(results.sample_heat_load_breakdown_w) == HEAT_SOURCES
+    assert results.sample_heat_load_w == pytest.approx(sum(results.sample_heat_load_breakdown_w.values()))
+    assert results.sample_heat_load_breakdown_w["turbine_cap_conduction"] > 0.0
+    assert results.feasible
+
+
+def test_rotor_too_short_for_5mm_sample_zone_is_ruled_out(assumptions):
+    results = evaluate(Design(rotor_length_mm=8.0), assumptions)
+    assert results.fits_bore
+    assert results.sample_zone_mm < 5.0
+    assert not results.feasible
+    assert results.binding_constraint == "Sample Zone"
+
+
+def test_internal_load_in_poor_conductor_overheats_sample(assumptions):
+    # Centre-to-wall rise of a uniformly heated cylinder: Q / (4 pi k L)
+    #   = 1e-5 W / (4 pi * 1e-5 W/(m K) * 5e-3 m) = 15.9 K, far above 1.3 K,
+    # while 10 uW barely warms the wall, so the Sample Zone itself survives.
+    design = Design(rotor_length_mm=20.0, sample_internal_heat_load_w=1e-5,
+                    sample_conductivity_w_m_k=1e-5)
+    results = evaluate(design, assumptions)
+    assert results.sample_zone_mm >= 5.0
+    assert results.sample_hottest_temperature_k > 1.2 + 15.0
+    assert not results.feasible
+    assert results.binding_constraint == "Sample Temperature"
+
+
+def test_lower_sample_conductivity_gives_hotter_sample(assumptions):
+    good = evaluate(Design(rotor_length_mm=20.0, sample_internal_heat_load_w=1e-5,
+                           sample_conductivity_w_m_k=1.0), assumptions)
+    poor = evaluate(Design(rotor_length_mm=20.0, sample_internal_heat_load_w=1e-5,
+                           sample_conductivity_w_m_k=0.01), assumptions)
+    assert poor.sample_hottest_temperature_k > good.sample_hottest_temperature_k
+    assert poor.sample_heat_load_breakdown_w["internal_load"] == pytest.approx(1e-5, rel=1e-6)
