@@ -18,6 +18,8 @@ class Assumptions:
     nozzle_throat_sweep_mm: tuple
     nozzle_angle_sweep_deg: tuple
     stator_allowance: StatorAllowance
+    turbine_cap_height_mm: float
+    bottom_cap_thickness_mm: float
     environment_temperature_k: float
     environment_pressure_torr: float
     drive_gas_temperature_k: float
@@ -30,11 +32,17 @@ class Assumptions:
     baseline_nozzle_count: int
     baseline_nozzle_throat_mm: float
     baseline_nozzle_angle_deg: float
+    baseline_wall_thickness_mm: float
+    baseline_sample_length_mm: float
     sample_zone_delta_t_k: float
     min_sample_zone_mm: float
-    max_sample_temperature_k: float
     bath_cooling_power_w: float
     sample_internal_heat_load_w: float
+    sample_conductivity_w_m_k: float
+    stator_temperature_k: float
+    rotor_emissivity: float
+    windage_heat_to_rotor_fraction: float
+    zirconia_conductivity_multiplier: float
 
 
 def load_assumptions(path):
@@ -43,6 +51,7 @@ def load_assumptions(path):
     geometry, sweep, allowance = raw["geometry"], raw["sweep"], raw["stator_allowance"]
     environment, drive, thermal = raw["environment"], raw["drive"], raw["thermal"]
     drag, baseline = raw["drag"], raw["design_baseline"]
+    rotor, materials = raw["rotor"], raw["materials"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -59,6 +68,8 @@ def load_assumptions(path):
             cold_support_plate=allowance["cold_support_plate_mm"],
             probe_wall_clearance=allowance["probe_wall_clearance_mm"],
         ),
+        turbine_cap_height_mm=rotor["turbine_cap_height_mm"],
+        bottom_cap_thickness_mm=rotor["bottom_cap_thickness_mm"],
         environment_temperature_k=environment["temperature_k"],
         environment_pressure_torr=environment["pressure_torr"],
         drive_gas_temperature_k=drive["drive_gas_temperature_k"],
@@ -71,9 +82,15 @@ def load_assumptions(path):
         baseline_nozzle_count=baseline["nozzle_count"],
         baseline_nozzle_throat_mm=baseline["nozzle_throat_mm"],
         baseline_nozzle_angle_deg=baseline["nozzle_angle_deg"],
+        baseline_wall_thickness_mm=baseline["wall_thickness_mm"],
+        baseline_sample_length_mm=baseline["sample_length_mm"],
         sample_zone_delta_t_k=thermal["sample_zone_delta_t_k"],
         min_sample_zone_mm=thermal["min_sample_zone_mm"],
-        max_sample_temperature_k=thermal["max_sample_temperature_k"],
         bath_cooling_power_w=thermal["bath_cooling_power_w"],
         sample_internal_heat_load_w=thermal["sample_internal_heat_load_w"],
+        sample_conductivity_w_m_k=thermal["sample_conductivity_w_m_k"],
+        stator_temperature_k=thermal["stator_temperature_k"],
+        rotor_emissivity=thermal["rotor_emissivity"],
+        windage_heat_to_rotor_fraction=thermal["windage_heat_to_rotor_fraction"],
+        zirconia_conductivity_multiplier=materials["zirconia_conductivity_multiplier"],
     )

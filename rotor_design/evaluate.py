@@ -4,8 +4,11 @@ import math
 from dataclasses import dataclass
 
 from rotor_design.drag import windage_torque
+from rotor_design.gas import gap_heat_transfer_coefficient
 from rotor_design.geometry import max_rotor_diameter, projected_width
+from rotor_design.materials import ZIRCONIA
 from rotor_design.nozzle import nozzle_flow
+from rotor_design.thermal import rotor_thermal
 from rotor_design.turbine import fluted_cap_torque
 
 # Slack for a Design that sits exactly on the bore limit (mm).
@@ -15,6 +18,7 @@ PA_PER_BAR = 1e5
 # Required Supply Pressure is searched up to this multiple of the limit; beyond it, reported as inf.
 _PRESSURE_SEARCH_CEILING = 10.0
 _PRESSURE_REL_TOLERANCE = 1e-6
+_MARGIN_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,10 @@ class Design:
     nozzle_throat_mm: float | None = None
     nozzle_angle_deg: float | None = None
     drive_gas_temperature_k: float | None = None
+    wall_thickness_mm: float | None = None
+    sample_length_mm: float | None = None
+    sample_conductivity_w_m_k: float | None = None
+    sample_internal_heat_load_w: float | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,16 @@ class Results:
     drag_torque_n_m: float
     windage_regime: str
     knudsen_number: float
+    wall_thickness_mm: float
+    sample_length_mm: float
+    sample_conductivity_w_m_k: float
+    sample_internal_heat_load_w: float
+    z_mm: tuple
+    temperature_k: tuple
+    sample_zone_mm: float
+    sample_hottest_temperature_k: float
+    sample_heat_load_w: float
+    sample_heat_load_breakdown_w: dict
     feasible: bool
     binding_constraint: str
 
@@ -67,6 +85,9 @@ def evaluate(design, assumptions):
         raise ValueError(
             f"Rotor Length {design.rotor_length_mm} mm exceeds the {a.max_rotor_length_mm} mm limit"
         )
+    body_length_mm = design.rotor_length_mm - a.turbine_cap_height_mm
+    if body_length_mm <= a.bottom_cap_thickness_mm:
+        raise ValueError(f"Rotor Length {design.rotor_length_mm} mm leaves no room below the Turbine Cap")
     allowance = a.stator_allowance
     largest = max_rotor_diameter(design.rotor_length_mm, allowance, a.bore_diameter_mm, a.tilt_angle_deg)
     diameter = _or(design.rotor_diameter_mm, largest)
@@ -105,12 +126,47 @@ def evaluate(design, assumptions):
     supply_bar = supply_p / PA_PER_BAR
     reaches_spin = supply_bar <= a.max_supply_pressure_bar
 
+    wall_mm = _or(design.wall_thickness_mm, a.baseline_wall_thickness_mm)
+    sample_mm = _or(design.sample_length_mm, a.baseline_sample_length_mm)
+    sample_k = _or(design.sample_conductivity_w_m_k, a.sample_conductivity_w_m_k)
+    sample_q = _or(design.sample_internal_heat_load_w, a.sample_internal_heat_load_w)
+    windage_heat = (windage.torque_n_m * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
+                    / (design.rotor_length_mm / 1e3))
+    thermal = rotor_thermal(
+        outer_radius_m=radius_m,
+        wall_m=wall_mm / 1e3,
+        body_length_m=body_length_mm / 1e3,
+        bottom_cap_m=a.bottom_cap_thickness_mm / 1e3,
+        sample_length_m=sample_mm / 1e3,
+        wall_conductivity=lambda t: ZIRCONIA.conductivity(t, a.zirconia_conductivity_multiplier),
+        sample_conductivity_w_m_k=sample_k,
+        sample_internal_heat_load_w=sample_q,
+        # The Turbine Cap sits in the Drive Gas stream; taken at its supply temperature (upper bound).
+        turbine_cap_temperature_k=gas_t,
+        bath_temperature_k=a.environment_temperature_k,
+        stator_temperature_k=a.stator_temperature_k,
+        vapour_pressure_pa=back_p,
+        gap_m=a.rotor_stator_gap_mm / 1e3,
+        accommodation=a.accommodation_coefficient,
+        emissivity=a.rotor_emissivity,
+        windage_heat_per_length_w_m=windage_heat,
+        sample_zone_delta_t_k=a.sample_zone_delta_t_k,
+        gap_heat_transfer_coefficient=gap_heat_transfer_coefficient,
+    )
+    sample_zone_mm = thermal.sample_zone_m * 1e3
+    sample_limit_k = a.environment_temperature_k + a.sample_zone_delta_t_k
+
     # Each constraint's fractional margin; the smallest is the Binding Constraint.
     margins = {
         "Probe Bore": (usable_bore - width) / usable_bore if diameter > 0.0 else -1.0,
         "Supply Pressure": (a.max_supply_pressure_bar - supply_bar) / a.max_supply_pressure_bar,
+        "Sample Zone": (sample_zone_mm - a.min_sample_zone_mm) / a.min_sample_zone_mm,
+        "Sample Temperature": (sample_limit_k - thermal.sample_hottest_temperature_k) / a.sample_zone_delta_t_k,
     }
-    binding = min(margins, key=margins.get)
+    # A Design that breaks several constraints is ruled out by the first in build order
+    # (it cannot be built if it does not fit); otherwise the smallest margin limits it.
+    violated = [name for name, margin in margins.items() if margin < -_MARGIN_TOLERANCE]
+    binding = violated[0] if violated else min(margins, key=margins.get)
 
     return Results(
         rotor_length_mm=design.rotor_length_mm,
@@ -135,7 +191,18 @@ def evaluate(design, assumptions):
         drag_torque_n_m=windage.torque_n_m,
         windage_regime=windage.regime,
         knudsen_number=windage.knudsen_number,
-        feasible=fits and reaches_spin,
+        wall_thickness_mm=wall_mm,
+        sample_length_mm=sample_mm,
+        sample_conductivity_w_m_k=sample_k,
+        sample_internal_heat_load_w=sample_q,
+        z_mm=tuple(thermal.z_m * 1e3),
+        temperature_k=tuple(thermal.temperature_k),
+        sample_zone_mm=sample_zone_mm,
+        sample_hottest_temperature_k=thermal.sample_hottest_temperature_k,
+        sample_heat_load_w=thermal.sample_heat_load_w,
+        sample_heat_load_breakdown_w=thermal.breakdown_w,
+        feasible=(fits and reaches_spin and sample_zone_mm >= a.min_sample_zone_mm
+                  and thermal.sample_hottest_temperature_k <= sample_limit_k),
         binding_constraint=binding,
     )
 
