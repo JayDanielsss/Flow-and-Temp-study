@@ -3,7 +3,7 @@
 import pytest
 
 from rotor_design.gas import (gap_heat_transfer_coefficient, knudsen_number, mean_free_path,
-                              vapour_thermal_conductivity, vapour_viscosity)
+                              vapour_enthalpy, vapour_thermal_conductivity, vapour_viscosity)
 
 
 def test_vapour_viscosity_at_tabulated_point():
@@ -37,3 +37,10 @@ def test_gap_conduction_free_molecular_limit_matches_kinetic_theory():
     # h = (gamma + 1) / (gamma - 1) * p * sqrt(R / (8 pi T)), full accommodation
     #   1.2 K, 1e-4 Pa: 4 * 1e-4 * sqrt(2077.26 / (8 pi 1.2)) = 3.3197e-3 W/(m^2 K)
     assert gap_heat_transfer_coefficient(1.2, 1e-4, 0.1e-3) == pytest.approx(3.3197e-3, rel=1e-3)
+
+
+def test_vapour_enthalpy_difference_in_the_dilute_limit_is_five_halves_r_delta_t():
+    # Dilute monatomic gas: cp = 5/2 R. 10 K to 1.2 K at 0.2 Torr (26.6645 Pa):
+    #   2.5 * 2077.26 J/(kg K) * 8.8 K = 45,700 J/kg
+    drop = vapour_enthalpy(10.0, 26.6645) - vapour_enthalpy(1.2, 26.6645)
+    assert drop == pytest.approx(45_700, rel=1e-3)

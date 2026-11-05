@@ -82,9 +82,10 @@ def test_study_compares_bearing_configurations_without_excluded_combinations(tmp
         rows = list(csv.DictReader(f))
     assert {r["bearing"] for r in rows} == {"gas", "mechanical", "two_center_pivot"}
     assert {r["cooling_path"] for r in rows} == {"vapour", "vapour_and_cold_support"}
+    assert {r["exhaust_path"] for r in rows} == {"vented", "ducted"}
     assert all(r["bearing"] == "two_center_pivot" for r in rows if r["pivot_to_bath"] == "True")
     for column in ("bearing_friction_torque_n_m", "bearing_stiffness_n_m", "bearing_radial_space_mm",
-                   "heat_bearing_friction_w", "warning"):
+                   "heat_bearing_friction_w", "warning", "bath_heat_load_w", "pumping_speed_m3_s"):
         assert column in rows[0]
     assert all(r["warning"] for r in rows if r["bearing"] == "mechanical")
 

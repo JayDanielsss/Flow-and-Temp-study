@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 
 from rotor_design.bearing import BEARING_TYPES, TWO_CENTER_PIVOT, pivot_contact_conductance
 from rotor_design.drag import cold_support_shear_torque, windage_torque
-from rotor_design.gas import gap_heat_transfer_coefficient
+from rotor_design.gas import R_HELIUM, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
 from rotor_design.nozzle import nozzle_flow
@@ -25,6 +25,10 @@ _MARGIN_TOLERANCE = 1e-9
 VAPOUR_ONLY = "vapour"
 COLD_SUPPORT = "vapour_and_cold_support"
 COOLING_PATHS = (VAPOUR_ONLY, COLD_SUPPORT)
+# Exhaust Paths, part of the Configuration.
+VENTED = "vented"
+DUCTED = "ducted"
+EXHAUST_PATHS = (VENTED, DUCTED)
 STANDARD_GRAVITY = 9.80665
 
 
@@ -34,14 +38,16 @@ def is_excluded(bearing, pivot_to_bath):
 
 
 def configurations():
-    """Every allowed combination of Bearing type, pivot-to-Bath option, cooling path and Turbine type,
-    as Design fields."""
+    """Every allowed combination of Bearing type, pivot-to-Bath option, cooling path, Turbine type
+    and Exhaust Path, as Design fields."""
     return [
-        {"bearing": bearing, "pivot_to_bath": tied, "cooling_path": path, "turbine": turbine}
+        {"bearing": bearing, "pivot_to_bath": tied, "cooling_path": path, "turbine": turbine,
+         "exhaust_path": exhaust}
         for bearing in BEARING_TYPES
         for tied in (False, True)
         for path in COOLING_PATHS
         for turbine in TURBINE_TYPES
+        for exhaust in EXHAUST_PATHS
         if not is_excluded(bearing, tied)
     ]
 
@@ -66,6 +72,8 @@ class Design:
     pivot_to_bath: bool | None = None
     turbine: str | None = None
     hub_exit_diameter_mm: float | None = None   # Radial-Inflow only
+    exhaust_path: str | None = None
+    back_pressure_bar: float | None = None      # Ducted only; Vented takes the environment pressure
 
 
 @dataclass(frozen=True)
@@ -83,6 +91,7 @@ class Results:
     nozzle_angle_deg: float
     drive_gas_temperature_k: float
     spin_rate_hz: float
+    exhaust_path: str
     back_pressure_bar: float
     required_supply_pressure_bar: float
     required_mass_flow_kg_s: float
@@ -117,6 +126,9 @@ class Results:
     sample_hottest_temperature_k: float
     sample_heat_load_w: float
     sample_heat_load_breakdown_w: dict
+    exhaust_heat_to_bath_w: float   # Vented Drive Gas cooled to Bath vapour; 0 when Ducted
+    pumping_speed_m3_s: float       # to hold the environment pressure against the Vented gas; nan when Ducted
+    bath_heat_load_w: float
     feasible: bool
     binding_constraint: str
 
@@ -162,19 +174,26 @@ def evaluate(design, assumptions):
     angle_deg = _or(design.nozzle_angle_deg, a.baseline_nozzle_angle_deg)
     gas_t = _or(design.drive_gas_temperature_k, a.drive_gas_temperature_k)
     spin = a.target_spin_rate_hz
-    # Vented exhaust: the turbine exits into the probe space.
-    back_p = a.environment_pressure_torr * PA_PER_TORR
+    exhaust_path = _or(design.exhaust_path, a.exhaust_path)
+    if exhaust_path not in EXHAUST_PATHS:
+        raise ValueError(f"Unknown Exhaust Path {exhaust_path!r}; expected one of {EXHAUST_PATHS}")
+    # The Rotor always turns in the Bath vapour; only the turbine exit sees a return line.
+    vapour_p = a.environment_pressure_torr * PA_PER_TORR
+    if exhaust_path == VENTED:
+        back_p = vapour_p
+    else:
+        back_p = _or(design.back_pressure_bar, a.ducted_back_pressure_bar) * PA_PER_BAR
     radius_m = max(diameter, 0.0) / 2e3
 
     cooling_path = _or(design.cooling_path, a.cooling_path)
     if cooling_path not in COOLING_PATHS:
         raise ValueError(f"Unknown cooling path {cooling_path!r}; expected one of {COOLING_PATHS}")
     windage = windage_torque(radius_m, design.rotor_length_mm / 1e3, a.rotor_stator_gap_mm / 1e3, spin,
-                             a.environment_temperature_k, back_p, a.accommodation_coefficient)
+                             a.environment_temperature_k, vapour_p, a.accommodation_coefficient)
     if cooling_path == COLD_SUPPORT:
         cold_gap_mm = _or(design.cold_support_gap_mm, a.cold_support_gap_mm)
         cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, a.environment_temperature_k,
-                                                back_p, a.accommodation_coefficient).torque_n_m
+                                                vapour_p, a.accommodation_coefficient).torque_n_m
     else:
         cold_gap_mm, cold_torque = math.nan, 0.0
     wall_mm = _or(design.wall_thickness_mm, a.baseline_wall_thickness_mm)
@@ -184,7 +203,7 @@ def evaluate(design, assumptions):
                                        a.bottom_cap_thickness_mm / 1e3, a.turbine_cap_height_mm / 1e3),
         spin_rate_hz=spin,
         bath_temperature_k=a.environment_temperature_k,
-        ambient_pressure_pa=back_p,
+        ambient_pressure_pa=vapour_p,
         accommodation=a.accommodation_coefficient,
     )
     drag_torque = windage.torque_n_m + cold_torque + bearing_load.friction_torque_n_m
@@ -223,7 +242,7 @@ def evaluate(design, assumptions):
         turbine_cap_temperature_k=gas_t,
         bath_temperature_k=a.environment_temperature_k,
         stator_temperature_k=a.stator_temperature_k,
-        vapour_pressure_pa=back_p,
+        vapour_pressure_pa=vapour_p,
         gap_m=a.rotor_stator_gap_mm / 1e3,
         accommodation=a.accommodation_coefficient,
         emissivity=a.rotor_emissivity,
@@ -238,8 +257,26 @@ def evaluate(design, assumptions):
                                                                a.environment_temperature_k,
                                                                a.zirconia_conductivity_multiplier))
         if pivot_to_bath else None,
+        vented_gas_temperature_k=gas_t if exhaust_path == VENTED else None,
     )
     sample_zone_mm = thermal.sample_zone_m * 1e3
+
+    # Bath Heat Load, with the Stator at Bath temperature: all drag work ends there as heat.
+    drag_power = drag_torque * 2.0 * math.pi * spin
+    sources_w = drag_power + bearing_load.bottom_gas_heat_w + sample_q
+    if exhaust_path == VENTED:
+        # The vented gas is cooled to Bath vapour; this also covers its convection onto the
+        # Rotor and the Turbine Cap conduction, which it supplies.
+        if math.isfinite(mass_flow):
+            h0, _ = stagnation_state(gas_t, supply_p)
+            exhaust_heat = mass_flow * (h0 - vapour_enthalpy(a.environment_temperature_k, vapour_p)) - drag_power
+        else:
+            exhaust_heat = math.inf
+        pumping_speed = mass_flow * R_HELIUM * a.environment_temperature_k / vapour_p
+        bath_load = sources_w + exhaust_heat
+    else:
+        exhaust_heat, pumping_speed = 0.0, math.nan
+        bath_load = sources_w + thermal.turbine_cap_heat_in_w
     sample_limit_k = a.environment_temperature_k + a.sample_zone_delta_t_k
 
     # Each constraint's fractional margin; the smallest is the Binding Constraint.
@@ -248,6 +285,7 @@ def evaluate(design, assumptions):
         "Supply Pressure": (a.max_supply_pressure_bar - supply_bar) / a.max_supply_pressure_bar,
         "Sample Zone": (sample_zone_mm - a.min_sample_zone_mm) / a.min_sample_zone_mm,
         "Sample Temperature": (sample_limit_k - thermal.sample_hottest_temperature_k) / a.sample_zone_delta_t_k,
+        "Bath Heat Load": (a.bath_cooling_power_w - bath_load) / a.bath_cooling_power_w,
     }
     # A Design that breaks several constraints is ruled out by the first in build order
     # (it cannot be built if it does not fit); otherwise the smallest margin limits it.
@@ -268,6 +306,7 @@ def evaluate(design, assumptions):
         nozzle_angle_deg=angle_deg,
         drive_gas_temperature_k=gas_t,
         spin_rate_hz=spin,
+        exhaust_path=exhaust_path,
         back_pressure_bar=back_p / PA_PER_BAR,
         required_supply_pressure_bar=supply_bar,
         required_mass_flow_kg_s=mass_flow,
@@ -302,8 +341,12 @@ def evaluate(design, assumptions):
         sample_hottest_temperature_k=thermal.sample_hottest_temperature_k,
         sample_heat_load_w=thermal.sample_heat_load_w,
         sample_heat_load_breakdown_w=thermal.breakdown_w,
+        exhaust_heat_to_bath_w=exhaust_heat,
+        pumping_speed_m3_s=pumping_speed,
+        bath_heat_load_w=bath_load,
         feasible=(fits and reaches_spin and sample_zone_mm >= a.min_sample_zone_mm
-                  and thermal.sample_hottest_temperature_k <= sample_limit_k),
+                  and thermal.sample_hottest_temperature_k <= sample_limit_k
+                  and bath_load <= a.bath_cooling_power_w),
         binding_constraint=binding,
     )
 

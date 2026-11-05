@@ -19,6 +19,8 @@ _TABLE_MU_UPA_S = np.array([0.3279, 0.3395, 0.3573, 0.3834, 0.4171, 0.4573, 0.51
 _TABLE_K_MW_M_K = np.array([2.624, 2.713, 2.839, 3.026, 3.276, 3.581, 4.022, 4.510, 5.028, 5.560,
                             6.628, 7.658, 8.630, 9.537, 11.180, 12.650, 14.000, 15.250, 16.440])
 GAMMA = 5.0 / 3.0
+CP_DILUTE = 2.5 * R_HELIUM
+_COOLPROP_MIN_T_K = 2.2  # just above CoolProp's helium limit of 2.1768 K
 _DILUTE_PRESSURE_PA = 100.0  # for CoolProp above the table
 
 
@@ -65,6 +67,16 @@ def knudsen_number(temperature_k, pressure_pa, length_m):
 def vapour_density(temperature_k, pressure_pa):
     """Ideal-gas density of the dilute vapour (kg/m^3)."""
     return pressure_pa / (R_HELIUM * temperature_k)
+
+
+def vapour_enthalpy(temperature_k, pressure_pa):
+    """Specific enthalpy of helium gas (J/kg) on the same datum as stagnation_state.
+
+    Real gas (CoolProp) down to its lower limit; below it, as for the 1.2 K vapour,
+    extended with the dilute monatomic cp = 5/2 R at the same pressure.
+    """
+    t_ref = max(temperature_k, _COOLPROP_MIN_T_K)
+    return PropsSI("H", "T", t_ref, "P", pressure_pa, FLUID) - CP_DILUTE * (t_ref - temperature_k)
 
 
 def stagnation_state(temperature_k, pressure_pa):

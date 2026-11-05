@@ -8,7 +8,9 @@ import pytest
 
 from rotor_design.assumptions import load_assumptions
 from rotor_design.bearing import GAS, MECHANICAL, MECHANICAL_WARNING, TWO_CENTER_PIVOT
-from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, configurations, evaluate
+from rotor_design.evaluate import (COLD_SUPPORT, DUCTED, VAPOUR_ONLY, VENTED, Design, configurations,
+                                  evaluate)
+from rotor_design.gas import R_HELIUM, stagnation_state, vapour_enthalpy
 from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
@@ -73,8 +75,7 @@ def test_turbine_torque_balances_drag_at_target_spin_rate(assumptions):
     assert results.drag_torque_n_m > 0.0
     assert results.turbine_torque_n_m == pytest.approx(results.drag_torque_n_m, rel=1e-3)
     assert results.required_mass_flow_kg_s > 0.0
-    back_pressure_bar = 0.2 * 133.322 / 1e5
-    assert back_pressure_bar < results.required_supply_pressure_bar <= 3.77
+    assert results.back_pressure_bar < results.required_supply_pressure_bar <= 3.77
     assert results.feasible
 
 
@@ -263,11 +264,14 @@ def test_pivot_to_bath_with_any_other_bearing_is_excluded(assumptions, bearing):
 
 
 def test_configurations_cover_every_allowed_combination_and_no_excluded_one():
-    combos = {(c["bearing"], c["pivot_to_bath"], c["cooling_path"], c["turbine"]) for c in configurations()}
-    # (3 Bearing types x 2 cooling paths, plus the pivot-to-Bath option on two-center pivots) x 2 Turbine types.
-    assert len(combos) == 16
-    assert all(bearing == TWO_CENTER_PIVOT for bearing, tied, _, _ in combos if tied)
-    assert {turbine for *_, turbine in combos} == {FLUTED_CAP, RADIAL_INFLOW}
+    combos = {(c["bearing"], c["pivot_to_bath"], c["cooling_path"], c["turbine"], c["exhaust_path"])
+              for c in configurations()}
+    # (3 Bearing types x 2 cooling paths, plus the pivot-to-Bath option on two-center pivots)
+    # x 2 Turbine types x 2 Exhaust Paths.
+    assert len(combos) == 32
+    assert all(bearing == TWO_CENTER_PIVOT for bearing, tied, *_ in combos if tied)
+    assert {c[3] for c in combos} == {FLUTED_CAP, RADIAL_INFLOW}
+    assert {c[4] for c in combos} == {VENTED, DUCTED}
 
 
 def test_bottom_cap_warmed_by_lower_pivot_leaves_a_cold_sample_zone_above_it(assumptions):
@@ -317,3 +321,79 @@ def test_wider_hub_exit_lowers_torque_per_unit_flow(assumptions):
     narrow, wide = (evaluate(Design(rotor_length_mm=20.0, turbine=RADIAL_INFLOW, hub_exit_diameter_mm=d),
                              assumptions) for d in (1.0, 6.0))
     assert wide.turbine_torque_per_flow_n_m_s_kg < narrow.turbine_torque_per_flow_n_m_s_kg
+
+
+PA_PER_TORR = 133.322
+
+
+def test_exhaust_path_is_part_of_the_configuration(assumptions):
+    default = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert default.exhaust_path == assumptions.exhaust_path == DUCTED
+    assert default.back_pressure_bar == assumptions.ducted_back_pressure_bar
+    vented = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
+    assert vented.exhaust_path == VENTED
+    # Vented: the turbine exits into the probe space at the Bath's 0.2 Torr.
+    assert vented.back_pressure_bar == pytest.approx(0.2 * PA_PER_TORR / 1e5)
+
+
+def test_unknown_exhaust_path_is_rejected(assumptions):
+    with pytest.raises(ValueError, match="Exhaust Path"):
+        evaluate(Design(rotor_length_mm=20.0, exhaust_path="recirculated"), assumptions)
+
+
+def test_ducted_back_pressure_is_an_input_and_a_higher_one_needs_more_supply_pressure(assumptions):
+    low, high = (evaluate(Design(rotor_length_mm=20.0, exhaust_path=DUCTED, back_pressure_bar=p), assumptions)
+                 for p in (0.01, 0.5))
+    assert low.back_pressure_bar == 0.01
+    assert high.back_pressure_bar == 0.5
+    assert high.required_supply_pressure_bar > low.required_supply_pressure_bar
+
+
+def test_vented_reports_pumping_speed_to_hold_the_probe_space_pressure(assumptions):
+    vented = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
+    ducted = evaluate(Design(rotor_length_mm=20.0, exhaust_path=DUCTED), assumptions)
+    # Volume flow of the vented Drive Gas as vapour at 1.2 K and 0.2 Torr: m R T / p.
+    expected = vented.required_mass_flow_kg_s * R_HELIUM * 1.2 / (0.2 * PA_PER_TORR)
+    assert vented.pumping_speed_m3_s == pytest.approx(expected)
+    assert math.isnan(ducted.pumping_speed_m3_s)
+    assert ducted.exhaust_heat_to_bath_w == 0.0
+
+
+def test_vented_exhaust_heat_is_mass_flow_times_enthalpy_drop_to_the_bath(assumptions):
+    # The Drive Gas enters with the supply stagnation enthalpy, gives up the shaft work to the
+    # turbine and is cooled to Bath vapour: Q = m (h0 - h_bath) - torque * omega.
+    r = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
+    h0, _ = stagnation_state(10.0, r.required_supply_pressure_bar * 1e5)
+    h_bath = vapour_enthalpy(1.2, 0.2 * PA_PER_TORR)
+    shaft_power = r.turbine_torque_n_m * 2.0 * math.pi * 1000.0
+    assert r.exhaust_heat_to_bath_w == pytest.approx(r.required_mass_flow_kg_s * (h0 - h_bath) - shaft_power,
+                                                     rel=1e-6)
+    # The shaft work returns to the Bath as drag heat; two-center pivots add no bearing gas.
+    assert r.bath_heat_load_w == pytest.approx(r.exhaust_heat_to_bath_w + shaft_power, rel=1e-5)
+
+
+def test_vented_gives_higher_bath_heat_load_than_ducted(assumptions):
+    vented = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
+    ducted = evaluate(Design(rotor_length_mm=20.0, exhaust_path=DUCTED), assumptions)
+    assert ducted.bath_heat_load_w >= ducted.sample_heat_load_w > 0.0
+    assert vented.bath_heat_load_w > ducted.bath_heat_load_w
+
+
+def test_vented_drive_gas_convects_onto_the_rotor_and_warms_it(assumptions):
+    # Drive Gas at 10 K washing the whole body is an upper bound: it leaves no Sample Zone.
+    vented = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
+    ducted = evaluate(Design(rotor_length_mm=20.0, exhaust_path=DUCTED), assumptions)
+    assert min(vented.temperature_k) > min(ducted.temperature_k)
+    assert vented.sample_hottest_temperature_k > ducted.sample_hottest_temperature_k
+    assert vented.sample_zone_mm < ducted.sample_zone_mm
+    assert not vented.feasible
+
+
+def test_design_over_the_bath_cooling_power_is_ruled_out_by_bath_heat_load(assumptions):
+    design = Design(rotor_length_mm=20.0, exhaust_path=DUCTED)
+    assert evaluate(design, assumptions).feasible
+    load = evaluate(design, assumptions).bath_heat_load_w
+    starved = evaluate(design, replace(assumptions, bath_cooling_power_w=load / 2.0))
+    assert starved.bath_heat_load_w == pytest.approx(load)
+    assert not starved.feasible
+    assert starved.binding_constraint == "Bath Heat Load"
