@@ -1,0 +1,7 @@
+.mcp.json
+CLAUDE.md
+CONTEXT.md
+/docs
+Plots/
+__pycache__/
+.pytest_cache/
