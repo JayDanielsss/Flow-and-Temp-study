@@ -216,6 +216,7 @@ def evaluate(design, assumptions):
     windage = windage_torque(radius_m, design.rotor_length_mm / 1e3, a.rotor_stator_gap_mm / 1e3, spin,
                              a.environment_temperature_k, vapour_p, a.accommodation_coefficient,
                              environment_gas)
+    windage_torque_n_m = windage.torque_n_m * a.windage_torque_multiplier
     if cooling_path == COLD_SUPPORT:
         cold_gap_mm = _or(design.cold_support_gap_mm, a.cold_support_gap_mm)
         cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, a.environment_temperature_k,
@@ -236,7 +237,7 @@ def evaluate(design, assumptions):
         accommodation=a.accommodation_coefficient,
         gas=drive_gas,
     )
-    drag_torque = windage.torque_n_m + cold_torque + bearing_load.friction_torque_n_m
+    drag_torque = windage_torque_n_m + cold_torque + bearing_load.friction_torque_n_m
 
     def drive(supply_p):
         flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient, drive_gas)
@@ -257,7 +258,7 @@ def evaluate(design, assumptions):
     sample_mm = _or(design.sample_length_mm, a.baseline_sample_length_mm)
     sample_k = _or(design.sample_conductivity_w_m_k, a.sample_conductivity_w_m_k)
     sample_q = _or(design.sample_internal_heat_load_w, a.sample_internal_heat_load_w)
-    windage_heat = (windage.torque_n_m * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
+    windage_heat = (windage_torque_n_m * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
                     / (design.rotor_length_mm / 1e3))
     thermal = rotor_thermal(
         outer_radius_m=radius_m,

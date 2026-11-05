@@ -12,14 +12,25 @@ from rotor_design.study import configuration_name, run_study
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
 # Every Configuration at two Rotor Lengths: the 10 mm Rotor is too short for a 5 mm Sample Zone.
 TINY_GRID = {"rotor_length_mm": [10.0, 20.0], "nozzle_throat_mm": [0.3], "cold_support_gap_mm": [0.1]}
+# The shared study also tries two Nozzle counts: each Rotor then has two Nozzle setups, which tie
+# on Sample Heat Load because Nozzle geometry only sets the drive.
+SHARED_GRID = {**TINY_GRID, "nozzle_count": [2, 4]}
+# Design fields that set the drive, not the Rotor.
+NOZZLE_FIELDS = ("nozzle_count", "nozzle_throat_mm", "nozzle_angle_deg")
+# A few Monte Carlo samples on the top Designs keep the study test quick.
+TINY_UNCERTAINTY = {"uncertainty_samples": 6, "uncertainty_designs": 2}
+
+
+def _tiny_run(plots):
+    run_study(ASSUMPTIONS_FILE, plots, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
+              cold_support_gaps_mm=[0.1], grid=SHARED_GRID, **TINY_UNCERTAINTY)
 
 
 @pytest.fixture(scope="module")
 def tiny_study(tmp_path_factory):
-    """Plots folder of one full study over TINY_GRID, shared by the tests that only read it."""
+    """Plots folder of one full study over SHARED_GRID, shared by the tests that only read it."""
     plots = tmp_path_factory.mktemp("Plots")
-    run_study(ASSUMPTIONS_FILE, plots, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
-              cold_support_gaps_mm=[0.1], grid=TINY_GRID)
+    _tiny_run(plots)
     return plots
 
 
@@ -114,6 +125,9 @@ def test_full_study_ranks_only_feasible_designs_with_every_input_and_result(tiny
     assert [int(r["rank"]) for r in rows] == list(range(1, len(rows) + 1))
     loads = [float(r["sample_heat_load_w"]) for r in rows]
     assert loads == sorted(loads)
+    # Tied Designs, such as Nozzle setups of one Rotor, are ranked by lowest Drive Gas flow.
+    order = [(float(r["sample_heat_load_w"]), float(r["required_mass_flow_kg_s"])) for r in rows]
+    assert order == sorted(order)
     for column in [f.name for f in fields(Design)] + ["configuration", "sample_volume_mm3",
                                                      "sample_heat_load_w", "bath_heat_load_w",
                                                      "binding_constraint", "heat_windage_w"]:
@@ -140,3 +154,51 @@ def test_full_study_maps_the_binding_constraint_for_each_configuration(tiny_stud
 def test_full_study_plots_sample_heat_load_trade_off_and_breakdown(tiny_study):
     for plot in ("sample_heat_load_vs_sample_volume.png", "sample_heat_load_breakdown_top_designs.png"):
         assert (tiny_study / plot).stat().st_size > 0
+
+
+# Quantities given a Monte Carlo band, as Results fields.
+BANDED = ("required_supply_pressure_bar", "required_mass_flow_kg_s", "sample_heat_load_w",
+          "sample_hottest_temperature_k", "sample_zone_mm", "bath_heat_load_w")
+
+
+def _rotor(row):
+    """A CSV row's Rotor: every Design field except the Nozzle geometry."""
+    return tuple(row[f.name] for f in fields(Design) if f.name not in NOZZLE_FIELDS)
+
+
+def _read(path):
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def test_monte_carlo_bands_the_top_designs_and_reports_feasibility_as_a_probability(tiny_study):
+    rows = _read(tiny_study / "uncertainty_top_designs.csv")
+    ranked = _read(tiny_study / "ranked_designs.csv")
+    assert [int(r["rank"]) for r in rows] == [1, 2]
+    # The bands go to distinct Rotors, each at its best-ranked Nozzle setup.
+    best = {}
+    for r in ranked:
+        best.setdefault(_rotor(r), r)
+    distinct = list(best.values())
+    assert [_rotor(r) for r in rows] == [_rotor(r) for r in distinct[:2]]
+    assert [r["nozzle_count"] for r in rows] == [r["nozzle_count"] for r in distinct[:2]]
+    for r in rows:
+        assert int(r["samples"]) == TINY_UNCERTAINTY["uncertainty_samples"]
+        assert 0.0 <= float(r["feasible_probability"]) <= 1.0
+        for q in BANDED:
+            p5, median, p95 = (float(r[f"{q}_{s}"]) for s in ("p5", "median", "p95"))
+            assert p5 <= median <= p95, q
+        # The conductivity range alone spreads the Sample Heat Load.
+        assert float(r["sample_heat_load_w_p5"]) < float(r["sample_heat_load_w_p95"])
+
+    errors = _read(tiny_study / "uncertainty_model_form_error.csv")
+    # Every Reference Case mechanism with a comparison feeds a spread into the bands.
+    assert {e["mechanism"] for e in errors} == {"nozzle", "windage", "rarefied_drag", "turbine", "conduction"}
+    assert all(float(e["rms_error"]) > 0.0 for e in errors)
+
+    assert (tiny_study / "uncertainty_top_designs.png").stat().st_size > 0
+
+
+def test_monte_carlo_is_reproducible_with_a_fixed_seed(tiny_study, tmp_path):
+    _tiny_run(tmp_path)
+    assert _read(tmp_path / "uncertainty_top_designs.csv") == _read(tiny_study / "uncertainty_top_designs.csv")

@@ -5,7 +5,7 @@ import itertools
 import math
 import os
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from functools import partial
 from pathlib import Path
 
@@ -21,6 +21,7 @@ from rotor_design.assumptions import load_assumptions
 from rotor_design.evaluate import (COLD_SUPPORT, CONSTRAINTS, DUCTED, VAPOUR_ONLY, Design, configurations,
                                    evaluate)
 from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW, TURBINE_TYPES
+from rotor_design.uncertainty import bands, mechanism_errors, sample_assumptions
 
 SERIES = "#2a78d6"
 INK = "#0b0b0b"
@@ -38,6 +39,8 @@ _CONSTRAINT_LABELS = {"Probe Bore": "Bore", "Supply Pressure": "Supply", "Stress
                       "Sample Temperature": "Temp", "Bath Heat Load": "Bath"}
 # The Configuration's discrete choices, as Design fields.
 CONFIGURATION_FIELDS = ("bearing", "pivot_to_bath", "cooling_path", "turbine", "exhaust_path")
+# Design fields that set the drive, not the Rotor. Nozzle setups of one Rotor tie on Sample Heat Load.
+NOZZLE_FIELDS = ("nozzle_count", "nozzle_throat_mm", "nozzle_angle_deg")
 # Grid fields that apply only to some Configurations.
 _APPLIES_WHEN = {
     "cold_support_gap_mm": lambda c: c["cooling_path"] == COLD_SUPPORT,
@@ -88,15 +91,37 @@ def evaluate_all(designs, assumptions, workers=None):
         return list(pool.map(partial(evaluate, assumptions=assumptions), designs, chunksize=chunk))
 
 
+def _evaluate_pair(pair):
+    return evaluate(*pair)
+
+
+def evaluate_samples(designs, samples, workers=None):
+    """Each Design evaluated on every Monte Carlo sample of the assumptions: one list of Results per Design."""
+    pairs = [(d, s) for d in designs for s in samples]
+    workers = workers or os.cpu_count() or 1
+    if workers == 1 or len(pairs) < 2:
+        flat = [evaluate(d, s) for d, s in pairs]
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            flat = list(pool.map(_evaluate_pair, pairs, chunksize=max(1, len(pairs) // (8 * workers))))
+    return [flat[i:i + len(samples)] for i in range(0, len(flat), len(samples))]
+
+
 def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=None, cold_support_gaps_mm=None,
-              grid=None, workers=None):
+              grid=None, workers=None, uncertainty_samples=None, uncertainty_designs=None):
     """Run the full study and the one-variable sweeps; return the full study's Results.
 
     The full study evaluates every allowed Configuration over the full factorial of the grid
     (the assumptions file's [study.grid] unless grid is given, a dict of Design field to values).
-    Its Feasible Designs are ranked by lowest Sample Heat Load into ranked_designs.csv; it also
-    writes a constraint map per Configuration (constraint_maps.csv and one plot each), Sample Heat
-    Load against Sample volume, and T(z) profiles and Sample Heat Load breakdowns of the top Designs.
+    Its Feasible Designs are ranked by lowest Sample Heat Load, ties by lowest Drive Gas flow, into
+    ranked_designs.csv; it also writes a constraint map per Configuration (constraint_maps.csv and one
+    plot each), Sample Heat Load against Sample volume, and T(z) profiles and Sample Heat Load
+    breakdowns of the top Designs. The top Designs are distinct Rotors (Feasible first), each at its
+    best-ranked Nozzle setup; they are then run through the Monte Carlo over the Input
+    Uncertainty and Model-Form Error: uncertainty_top_designs.csv and its plot give each one's
+    median and percentile band and its probability of being a Feasible Design, and
+    uncertainty_model_form_error.csv the spread taken from each Reference Case mechanism.
+    uncertainty_samples and uncertainty_designs override the assumptions file's counts.
 
     nozzle_sweeps maps a Design field (nozzle_count, nozzle_throat_mm,
     nozzle_angle_deg) to the values tried, one field at a time about the baseline.
@@ -106,21 +131,40 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     Both Turbine types are compared on torque per unit Drive Gas flow at each Rotor Length.
     """
     a = load_assumptions(assumptions_path)
+    a = replace(a, uncertainty_samples=uncertainty_samples or a.uncertainty_samples,
+                uncertainty_designs=uncertainty_designs or a.uncertainty_designs)
     run = partial(evaluate_all, assumptions=a, workers=workers)
     plots_dir = Path(plots_dir)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    study = run(study_designs(a, grid))
+    designs = study_designs(a, grid)
+    study = run(designs)
     # Feasible Designs first, each group by lowest Sample Heat Load.
-    ranked = sorted(study, key=lambda r: (not r.feasible, r.sample_heat_load_w))
+    order = sorted(range(len(study)), key=lambda i: (not study[i].feasible, study[i].sample_heat_load_w,
+                                                     study[i].required_mass_flow_kg_s))
+    ranked = [study[i] for i in order]
+    best_per_rotor = {}
+    for i in order:
+        best_per_rotor.setdefault(_rotor(study[i]), i)
+    top = list(best_per_rotor.values())
     feasible = [r for r in ranked if r.feasible]
     _write_rows([{"rank": i + 1, "configuration": configuration_name(_configuration(r)), **asdict(r)}
                  for i, r in enumerate(feasible)], plots_dir / "ranked_designs.csv",
                 fieldnames=["rank", "configuration", *_flatten(asdict(study[0]))])
-    _plot_profiles(ranked[:TOP_DESIGNS], a, plots_dir / "temperature_profiles_top_designs.png")
+    _plot_profiles([study[i] for i in top[:TOP_DESIGNS]], a, plots_dir / "temperature_profiles_top_designs.png")
     _write_constraint_maps(study, a, plots_dir)
     _plot_trade_off(feasible, a, plots_dir / "sample_heat_load_vs_sample_volume.png")
-    _plot_breakdown(ranked[:a.study_top_designs], plots_dir / "sample_heat_load_breakdown_top_designs.png")
+    _plot_breakdown([study[i] for i in top[:a.study_top_designs]], plots_dir / "sample_heat_load_breakdown_top_designs.png")
+
+    errors = mechanism_errors(a)
+    _write_rows([asdict(e) for e in errors], plots_dir / "uncertainty_model_form_error.csv")
+    top = top[:a.uncertainty_designs]
+    by_design = evaluate_samples([designs[i] for i in top], sample_assumptions(a, errors), workers)
+    band_rows = [{"rank": rank + 1, "configuration": configuration_name(_configuration(study[i])),
+                  **bands(results, a), **asdict(study[i])}
+                 for rank, (i, results) in enumerate(zip(top, by_design))]
+    _write_rows(band_rows, plots_dir / "uncertainty_top_designs.csv")
+    _plot_uncertainty(band_rows, a, plots_dir / "uncertainty_top_designs.png")
 
     if rotor_lengths_mm is None:
         rotor_lengths_mm = np.arange(
@@ -165,6 +209,12 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
 
 def _configuration(result):
     return {f: getattr(result, f) for f in CONFIGURATION_FIELDS}
+
+
+def _rotor(result):
+    """The Rotor a Design builds: every Design field but the Nozzle geometry (nan read as unset)."""
+    values = (getattr(result, f.name) for f in fields(Design) if f.name not in NOZZLE_FIELDS)
+    return tuple(None if isinstance(v, float) and math.isnan(v) else v for v in values)
 
 
 def _cell_best(results):
@@ -506,7 +556,8 @@ def _plot_breakdown(results, path):
     ax.set_xlim(0, 100)
     ax.set_xlabel("Share of Sample Heat Load (%)", color=INK_SECONDARY, fontsize=9)
     ax.legend(frameon=False, fontsize=8, labelcolor=INK, ncol=3, loc="upper left", bbox_to_anchor=(0.0, -0.08))
-    ax.set_title("Sample Heat Load by source, top-ranked Designs", color=INK, fontsize=11, loc="left")
+    ax.set_title("Sample Heat Load by source, top-ranked Rotors at their best Nozzle setup", color=INK,
+                 fontsize=11, loc="left")
     fig.tight_layout()
     fig.savefig(path, dpi=150, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -530,7 +581,7 @@ def _plot_profiles(results, assumptions, path):
                label=f"Sample Zone limit, {delta:g} K above Bath")
     ax.set_yscale("log")
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
-    ax.set_title("Temperature rise above the Bath along the Rotor body, top-ranked Designs",
+    ax.set_title("Temperature rise above the Bath along the Rotor body, top-ranked Rotors",
                  color=INK, fontsize=11, loc="left")
     ax.set_xlabel("Distance from Bottom Cap (mm); Turbine Cap at the right end", color=INK_SECONDARY)
     ax.set_ylabel(f"T - {bath:g} K (K)", color=INK_SECONDARY)
@@ -544,4 +595,58 @@ def _plot_profiles(results, assumptions, path):
     ax.tick_params(colors=INK_SECONDARY, labelsize=9)
     fig.tight_layout()
     fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def _plot_uncertainty(rows, assumptions, path):
+    """Median and percentile band of the key results for each top-ranked Design, with its feasibility probability."""
+    lower, upper = assumptions.uncertainty_percentiles
+    panels = (
+        ("Sample Heat Load (mW)", "sample_heat_load_w", 1e3, None),
+        ("Required Supply Pressure (bar)", "required_supply_pressure_bar", 1.0, assumptions.max_supply_pressure_bar),
+        ("Bath Heat Load (mW)", "bath_heat_load_w", 1e3, assumptions.bath_cooling_power_w * 1e3),
+    )
+    fig, axes = plt.subplots(1, len(panels), figsize=(11, 0.45 * len(rows) + 2.2), sharey=True,
+                             facecolor=SURFACE, squeeze=False)
+    for ax, (label, field, scale, limit) in zip(axes[0], panels):
+        _style(ax)
+        ax.grid(axis="y", visible=False)
+        edges = [(r[f"{field}_p{lower:g}"] * scale, r[f"{field}_median"] * scale, r[f"{field}_p{upper:g}"] * scale)
+                 for r in rows]
+        finite = [v for e in edges for v in e if math.isfinite(v) and v > 0.0]
+        if limit is not None:
+            finite.append(limit)
+        # A band edge that never reaches the Target Spin Rate is drawn to the axis end with an arrow.
+        right = max(finite) * 1.5 if finite else 1.0
+        for i, (lo, mid, hi) in enumerate(edges):
+            ax.plot([lo, min(hi, right)], [i, i], color=SERIES, linewidth=2, solid_capstyle="round")
+            if not math.isfinite(hi):
+                ax.plot(right, i, ">", color=SERIES, markersize=6)
+            if math.isfinite(mid):
+                ax.plot(mid, i, "o", color=SERIES, markersize=8, markeredgecolor=SURFACE, markeredgewidth=2)
+        if limit is not None:
+            ax.axvline(limit, color=INK_SECONDARY, linewidth=1, linestyle=":")
+            ax.annotate("limit", (limit, 1.0), xycoords=("data", "axes fraction"), xytext=(3, -2),
+                        textcoords="offset points", ha="left", va="top", color=INK_SECONDARY, fontsize=8)
+        ax.set_xscale("log")
+        ax.set_xlim(min(finite) / 1.5 if finite else None, right)
+        ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.xaxis.set_major_locator(matplotlib.ticker.LogLocator(subs=(1.0, 2.0, 5.0)))
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set_xlabel(label, color=INK_SECONDARY, fontsize=9)
+    last = axes[0, -1]
+    for i, r in enumerate(rows):
+        last.annotate(f"P(feasible) {r['feasible_probability']:.0%}", (1.02, i), xycoords=("axes fraction", "data"),
+                      ha="left", va="center", color=INK, fontsize=8)
+    axes[0, 0].set_yticks(range(len(rows)),
+                          [f"#{r['rank']} {r['configuration'].replace('-', ', ')}\n"
+                           f"{r['rotor_length_mm']:g} mm Rotor, {r['wall_thickness_mm']:g} mm wall, "
+                           f"{r['sample_length_mm']:g} mm Sample"
+                           + (f", {r['cold_support_gap_mm']:g} mm gap" if math.isfinite(r['cold_support_gap_mm']) else "")
+                           for r in rows], fontsize=7)
+    axes[0, 0].invert_yaxis()
+    fig.suptitle(f"Top-ranked Rotors under uncertainty: median (dot) and {lower:g}th-{upper:g}th percentile band, "
+                 f"{rows[0]['samples']} samples", color=INK, fontsize=11, x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
