@@ -54,6 +54,9 @@ class Assumptions:
     stator_temperature_k: float
     rotor_emissivity: float
     windage_heat_to_rotor_fraction: float
+    required_safety_factor: float
+    critical_speed_separation: float
+    whirl_onset_ratio: float
     zirconia_conductivity_multiplier: float
 
 
@@ -65,6 +68,7 @@ def load_assumptions(path):
     drag, baseline = raw["drag"], raw["design_baseline"]
     rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
     bearing, turbine, exhaust = raw["bearing"], raw["turbine"], raw["exhaust"]
+    stress, rotordynamics = raw["stress"], raw["rotordynamics"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -122,5 +126,8 @@ def load_assumptions(path):
         stator_temperature_k=thermal["stator_temperature_k"],
         rotor_emissivity=thermal["rotor_emissivity"],
         windage_heat_to_rotor_fraction=thermal["windage_heat_to_rotor_fraction"],
+        required_safety_factor=stress["required_safety_factor"],
+        critical_speed_separation=rotordynamics["critical_speed_separation"],
+        whirl_onset_ratio=rotordynamics["whirl_onset_ratio"],
         zirconia_conductivity_multiplier=materials["zirconia_conductivity_multiplier"],
     )

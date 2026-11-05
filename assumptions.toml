@@ -105,5 +105,12 @@ stator_temperature_k = 1.2        # placeholder: Stator held at Bath temperature
 rotor_emissivity = 0.9            # placeholder, no source yet
 windage_heat_to_rotor_fraction = 1.0  # placeholder: all windage heat enters the Rotor (upper bound)
 
+[stress]
+required_safety_factor = 3.0   # placeholder, on room-temperature tensile strength; no cryogenic data
+
+[rotordynamics]
+critical_speed_separation = 0.2  # no critical speed within this fraction of the Target Spin Rate
+whirl_onset_ratio = 2.0          # placeholder rule of thumb: gas-bearing whirl onset / lowest rigid-body critical speed
+
 [materials]
 zirconia_conductivity_multiplier = 1.0  # Input Uncertainty range x0.3 to x3
