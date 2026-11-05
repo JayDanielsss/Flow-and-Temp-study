@@ -39,15 +39,15 @@ TOY_DESIGN = Design(
 
 def _toy_assumptions(**overrides):
     a = load_assumptions(ASSUMPTIONS_FILE)
-    return replace(
-        a, environment_gas="nitrogen", environment_temperature_k=300.0, stator_temperature_k=300.0,
+    toy = dict(
+        environment_gas="nitrogen", environment_temperature_k=300.0, stator_temperature_k=300.0,
         environment_pressure_torr=PA_PER_BAR / PA_PER_TORR, target_spin_rate_hz=1000.0,
         discharge_coefficient=0.8, turbine_efficiency=1.0, rotor_stator_gap_mm=0.1,
         windage_heat_to_rotor_fraction=0.0, rotor_emissivity=0.0,
         bearings={**a.bearings, TWO_CENTER_PIVOT: TwoCenterPivots(friction_coefficient=0.0, preload_n=0.05,
                                                                   tip_radius_mm=0.5)},
-        **overrides,
     )
+    return replace(a, **{**toy, **overrides})
 
 
 @pytest.fixture(scope="module")
@@ -110,10 +110,16 @@ def test_with_no_heat_sources_the_whole_rotor_stays_at_the_common_temperature(to
     assert toy.sample_heat_load_w == pytest.approx(0.0, abs=1e-9)
 
 
-@pytest.mark.xfail(strict=True, reason="Stator radiation is added as a source on top of the net exchange "
-                                       "h_rad (T - T_stator), so a Rotor at the Stator temperature still "
-                                       "absorbs eps sigma T^4: the toy warms by 1.6 K at 300 K")
 def test_radiation_between_rotor_and_stator_at_one_temperature_carries_no_net_heat():
     hot = evaluate(TOY_DESIGN, _toy_assumptions(rotor_emissivity=0.9))
     assert np.allclose(hot.temperature_k, 300.0, atol=1e-6)
     assert hot.sample_heat_load_breakdown_w["radiation"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_warmer_stator_radiates_into_the_rotor():
+    # Stator 10 K above everything else: radiation now flows in, and only in.
+    base = evaluate(TOY_DESIGN, _toy_assumptions(stator_temperature_k=310.0))
+    hot = evaluate(TOY_DESIGN, _toy_assumptions(stator_temperature_k=310.0, rotor_emissivity=0.9))
+    assert base.sample_heat_load_breakdown_w["radiation"] == 0.0
+    assert hot.sample_heat_load_breakdown_w["radiation"] > 0.0
+    assert max(hot.temperature_k) > max(base.temperature_k)
