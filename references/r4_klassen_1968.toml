@@ -1,0 +1,27 @@
+# Reference Case R4: total-to-static efficiency of a 9.52 cm partial-admission axial impulse turbine, cold air.
+# The model's nearest Turbine is the Fluted Cap, which discharges at the rim speed with no relative turning;
+# this wheel turns the flow 123.39 deg in the rotor. The model has no partial-admission loss.
+id = "R4"
+name = "Klassen 1968: 9.52 cm partial-admission impulse turbine in cold air"
+mechanism = "turbine"
+
+[sources]
+klassen1968 = "H. A. Klassen, \"Cold-Air Investigation of Effects of Partial Admission on Performance of 3.75-Inch Mean-Diameter Single-Stage Axial-Flow Turbine,\" NASA TN D-4700 (1968). https://ntrs.nasa.gov/api/citations/19680020769/downloads/19680020769.pdf"
+
+[inputs]
+gas = { value = "air", source = "klassen1968", location = "Apparatus (dry air)", flag = "M" }
+supply_pressure_psia = { value = 25.0, source = "klassen1968", location = "Procedure, p. 6", flag = "M" }
+supply_temperature_k = { value = 300.0, source = "klassen1968", location = "Procedure, p. 6 (540 R)", flag = "M" }
+pressure_ratio = { value = 3.0, source = "klassen1968", location = "Procedure, p. 6 (static ratio, stated essentially equal to inlet-total to rotor-outlet-static)", flag = "M" }
+nozzle_angle_deg = { value = 13.39, source = "klassen1968", location = "Fig. 1 (stator-outlet flow angle from the tangential direction)", flag = "F", note = "design free-stream velocity diagram; actual stator throat area 2.2 % below design" }
+mean_diameter_cm = { value = 9.52, source = "klassen1968", location = "Title; Summary", flag = "M" }
+
+[[points]]
+inputs.blade_jet_speed_ratio = { value = 0.377, source = "klassen1968", location = "Overall Performance, Static efficiency", flag = "M" }
+inputs.admission_percent = { value = 100.0, source = "klassen1968", location = "Overall Performance, Static efficiency", flag = "M" }
+measured.total_to_static_efficiency = { value = 0.68, source = "klassen1968", location = "Overall Performance, Static efficiency; Summary", flag = "M" }
+
+[[points]]
+inputs.blade_jet_speed_ratio = { value = 0.377, source = "klassen1968", location = "Overall Performance, Static efficiency", flag = "M" }
+inputs.admission_percent = { value = 12.0, source = "klassen1968", location = "Overall Performance, Static efficiency", flag = "M" }
+measured.total_to_static_efficiency = { value = 0.56, source = "klassen1968", location = "Overall Performance, Static efficiency; Summary", flag = "M" }

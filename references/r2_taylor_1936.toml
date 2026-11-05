@@ -1,0 +1,27 @@
+# Reference Case R2: laminar torque between concentric cylinders, outer cylinder turning, glycerine-water.
+# Torque is not printed: it is the scale-pan weight that holds the inner cylinder, less the weight with the
+# apparatus empty, on the inner torque pulley (method, pp. 548-549). The run temperature is not stated, so
+# the 15 C viscosity is flagged U. Laminar Couette torque is the same whichever cylinder turns.
+id = "R2"
+name = "Taylor 1936: laminar torque between rotating cylinders, inner diameter 6.40 cm"
+mechanism = "windage"
+
+[sources]
+taylor1936 = "G. I. Taylor, \"Fluid Friction Between Rotating Cylinders. I - Torque Measurements,\" Proc. R. Soc. Lond. A 157, 546-564 (1936). https://doi.org/10.1098/rspa.1936.0215 (scan: https://archive.org/details/in.ernet.dli.2015.27019)"
+
+[inputs]
+inner_diameter_cm = { value = 6.40, source = "taylor1936", location = "p. 555; Table II", flag = "M" }
+outer_diameter_cm = { value = 8.11, source = "taylor1936", location = "Apparatus, p. 546; p. 555", flag = "M" }
+length_cm = { value = 84.2, source = "taylor1936", location = "p. 556 (length used in Eq. 1)", flag = "M" }
+viscosity_poise = { value = 0.0174, source = "taylor1936", location = "Table I, p. 549 (glycerine-water, density 1.046, at 15 C)", flag = "M, U", note = "run temperature not stated" }
+pulley_radius_cm = { value = 5.01, source = "taylor1936", location = "Data, p. 549 (inner cylinder)", flag = "M" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 20.8, source = "taylor1936", location = "p. 557", flag = "M" }
+inputs.empty_load_g = { value = 9.0, source = "taylor1936", location = "p. 557 (apparatus empty at N = 21: 10 and 8 g, mean 9)", flag = "M" }
+measured.scale_pan_load_g = { value = 21.0, source = "taylor1936", location = "p. 557 (steady flow)", flag = "M" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 21.0, source = "taylor1936", location = "p. 557", flag = "M" }
+inputs.empty_load_g = { value = 9.0, source = "taylor1936", location = "p. 557 (apparatus empty at N = 21: 10 and 8 g, mean 9)", flag = "M" }
+measured.scale_pan_load_g = { value = 22.0, source = "taylor1936", location = "p. 557 (steady flow, speed increased gradually)", flag = "M" }

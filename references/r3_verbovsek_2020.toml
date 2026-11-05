@@ -1,0 +1,35 @@
+# Reference Case R3b: sigma_e for helium and nitrogen on the same polished rotors, first measurement.
+# Rotor diameter, density and gas temperature are not reported, so every comparison is skipped.
+id = "R3b"
+name = "Verbovsek 2020: spinning rotor gauge sigma_e in helium and nitrogen, polished rotors A and B"
+mechanism = "rarefied_drag"
+
+[sources]
+verbovsek2020 = "T. Verbovsek, Vacuum metrology and the role of surface conditions on the tangential momentum accommodation of molecules in a rarefied gas, PhD thesis, Jozef Stefan International Postgraduate School, Ljubljana (2020). https://www.mps.si/en/repozitorij-rezultati/delo/vacuum-metrology-and-the-role-of-surface-conditions-on-the-tangential-momentum-accommodation-of-molecules-in-a-rarefied-gas/"
+
+[inputs]
+gas = { note = "given per point" }
+ball_diameter_mm = { note = "not reported; nominal manufacturer values implied" }
+ball_density_g_cm3 = { note = "not reported" }
+gas_temperature_k = { note = "not stated for Chapter 6" }
+pressure_pa = { note = "sigma_e from the zero-pressure intercept of calibrations at 0.1 to 1 Pa" }
+
+[[points]]
+inputs.gas = { value = "helium", source = "verbovsek2020", location = "Table 6.3, rotor A, measurement 1", flag = "M" }
+inputs.spin_rate_hz = { note = "405 to 425 Hz (Section 6.1)" }
+measured.effective_accommodation = { value = 1.044, source = "verbovsek2020", location = "Table 6.3, rotor A, measurement 1", flag = "M" }
+
+[[points]]
+inputs.gas = { value = "nitrogen", source = "verbovsek2020", location = "Table 6.3, rotor A, measurement 1", flag = "M" }
+inputs.spin_rate_hz = { note = "405 to 425 Hz (Section 6.1)" }
+measured.effective_accommodation = { value = 1.020, source = "verbovsek2020", location = "Table 6.3, rotor A, measurement 1", flag = "M" }
+
+[[points]]
+inputs.gas = { value = "helium", source = "verbovsek2020", location = "Table 6.3, rotor B, measurement 1", flag = "M" }
+inputs.spin_rate_hz = { note = "405 to 425 Hz (Section 6.1)" }
+measured.effective_accommodation = { value = 1.056, source = "verbovsek2020", location = "Table 6.3, rotor B, measurement 1", flag = "M" }
+
+[[points]]
+inputs.gas = { value = "nitrogen", source = "verbovsek2020", location = "Table 6.3, rotor B, measurement 1", flag = "M" }
+inputs.spin_rate_hz = { note = "405 to 425 Hz (Section 6.1)" }
+measured.effective_accommodation = { value = 1.025, source = "verbovsek2020", location = "Table 6.3, rotor B, measurement 1", flag = "M" }

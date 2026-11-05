@@ -1,0 +1,33 @@
+# Reference Case R1: discharge coefficient of toroidal-throat critical-flow venturis in dry air.
+# Cd values are figure reads; individual calibration points (p0, T0, mass flow) are not tabulated.
+# The ISO 9300 correlation is only known second-hand (docs/research/reference-experiments.md, R1a) and is not used.
+id = "R1"
+name = "Johnson & Wright 2008: measured Cd of NIST critical-flow venturis 8 and 9, dry air"
+mechanism = "nozzle"
+
+[sources]
+johnson2008 = "A. N. Johnson, J. D. Wright, \"Comparison Between Theoretical CFV Flow Models and NIST's Primary Flow Data in the Laminar, Turbulent, and Transition Flow Regimes,\" J. Fluids Eng. 130(7), 071202 (2008). https://doi.org/10.1115/1.2903806 (full text https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=830961)"
+
+[inputs]
+gas = { value = "air", source = "johnson2008", location = "Abstract; Table 1 caption (dry air)", flag = "M" }
+throat_diameter_mm = { note = "differs per venturi; given per point" }
+
+[[points]]
+inputs.throat_diameter_mm = { value = 4.8284, source = "johnson2008", location = "Table 2, CFV 9", flag = "M" }
+inputs.inverse_sqrt_reynolds = { value = 0.0014, source = "johnson2008", location = "Fig. 7(b)", flag = "F" }
+measured.discharge_coefficient = { value = 0.9935, source = "johnson2008", location = "Fig. 7(b)", flag = "F" }
+
+[[points]]
+inputs.throat_diameter_mm = { value = 4.8284, source = "johnson2008", location = "Table 2, CFV 9", flag = "M" }
+inputs.inverse_sqrt_reynolds = { value = 0.0037, source = "johnson2008", location = "Fig. 7(b)", flag = "F" }
+measured.discharge_coefficient = { value = 0.9837, source = "johnson2008", location = "Fig. 7(b)", flag = "F" }
+
+[[points]]
+inputs.throat_diameter_mm = { value = 6.3784, source = "johnson2008", location = "Table 2, CFV 8", flag = "M" }
+inputs.inverse_sqrt_reynolds = { value = 0.0015, source = "johnson2008", location = "Fig. 7(a)", flag = "F" }
+measured.discharge_coefficient = { value = 0.993, source = "johnson2008", location = "Fig. 7(a)", flag = "F" }
+
+[[points]]
+inputs.throat_diameter_mm = { value = 6.3784, source = "johnson2008", location = "Table 2, CFV 8", flag = "M" }
+inputs.inverse_sqrt_reynolds = { value = 0.0032, source = "johnson2008", location = "Fig. 7(a)", flag = "F" }
+measured.discharge_coefficient = { value = 0.987, source = "johnson2008", location = "Fig. 7(a)", flag = "F" }

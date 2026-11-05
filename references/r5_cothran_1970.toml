@@ -1,0 +1,44 @@
+# Reference Case R5: carbon-coated 2.54 cm aluminium rod radiating in vacuum to a 78.7 K wall, insulated tip.
+# Only the coated rod-only tests: the source analyses them as black, so the conduction parameter N_c holds
+# every property (the uncoated tests need a rod emissivity the source does not state). The coating adds a
+# thermal resistance at the root (Results, p. 32). Table C-4 rows are in test order and not labelled.
+# Tests 18-20 repeat test 12 with fewer thermocouples (48 -> 24 -> 11 -> 2).
+id = "R5"
+name = "Cothran 1970: radiating black aluminium rod, tip-to-root temperature ratio"
+mechanism = "conduction"
+
+[sources]
+cothran1970 = "C. A. Cothran, \"A Study of Radiation Heat Transfer From a Cylindrical Fin With Base Surface Interaction,\" NASA TN D-5722 (1970). https://ntrs.nasa.gov/api/citations/19700014952/downloads/19700014952.pdf"
+
+[inputs]
+wall_temperature_k = { value = 78.7, source = "cothran1970", location = "Test Setup, pp. 23-24 (tests 2-20)", flag = "M" }
+
+[[points]]
+inputs.root_temperature_k = { value = 280.6, source = "cothran1970", location = "Table C-3, test 11", flag = "M" }
+inputs.conduction_parameter = { value = 0.28617, source = "cothran1970", location = "Table C-3, test 11", flag = "M" }
+measured.tip_temperature_ratio = { value = 0.9344, source = "cothran1970", location = "Table C-4, row 11 (test)", flag = "M" }
+
+[[points]]
+inputs.root_temperature_k = { value = 345.8, source = "cothran1970", location = "Table C-3, test 12", flag = "M" }
+inputs.conduction_parameter = { value = 0.53601, source = "cothran1970", location = "Table C-3, test 12", flag = "M" }
+measured.tip_temperature_ratio = { value = 0.8883, source = "cothran1970", location = "Table C-4, row 12 (test)", flag = "M" }
+
+[[points]]
+inputs.root_temperature_k = { value = 423.6, source = "cothran1970", location = "Table C-3, test 13", flag = "M" }
+inputs.conduction_parameter = { value = 0.98544, source = "cothran1970", location = "Table C-3, test 13", flag = "M" }
+measured.tip_temperature_ratio = { value = 0.8322, source = "cothran1970", location = "Table C-4, row 13 (test)", flag = "M" }
+
+[[points]]
+inputs.root_temperature_k = { value = 348.8, source = "cothran1970", location = "Table C-3, test 18", flag = "M" }
+inputs.conduction_parameter = { value = 0.54987, source = "cothran1970", location = "Table C-3, test 18", flag = "M" }
+measured.tip_temperature_ratio = { value = 0.8829, source = "cothran1970", location = "Table C-4, row 18 (test)", flag = "M" }
+
+[[points]]
+inputs.root_temperature_k = { value = 351.4, source = "cothran1970", location = "Table C-3, test 19", flag = "M" }
+inputs.conduction_parameter = { value = 0.56258, source = "cothran1970", location = "Table C-3, test 19", flag = "M" }
+measured.tip_temperature_ratio = { value = 0.8822, source = "cothran1970", location = "Table C-4, row 19 (test)", flag = "M" }
+
+[[points]]
+inputs.root_temperature_k = { value = 352.1, source = "cothran1970", location = "Table C-3, test 20", flag = "M" }
+inputs.conduction_parameter = { value = 0.56579, source = "cothran1970", location = "Table C-3, test 20", flag = "M" }
+measured.tip_temperature_ratio = { value = 0.8840, source = "cothran1970", location = "Table C-4, row 20 (test)", flag = "M" }

@@ -96,6 +96,22 @@ class Comparison:
     skipped: str             # why the comparison could not be made; empty when it was
 
 
+def cited_value(where, name, entry, sources):
+    """One Value from a case file entry, checked for a usable citation."""
+    v = Value(**entry)
+    if v.value is None:
+        return v
+    if v.source not in sources:
+        raise ValueError(f"{where}: {name} = {v.value!r} cites unknown source {v.source!r}")
+    if not v.location:
+        raise ValueError(f"{where}: {name} = {v.value!r} gives no location in its source")
+    if v.flag in REJECTED_FLAGS:
+        raise ValueError(f"{where}: {name} is flagged {v.flag}, which is not validation truth")
+    if not v.flag or any(f.strip() not in FLAGS for f in v.flag.split(",")):
+        raise ValueError(f"{where}: {name} has flag {v.flag!r}; expected some of {FLAGS}")
+    return v
+
+
 def load_case(path):
     path = Path(path)
     with open(path, "rb") as f:
@@ -104,18 +120,7 @@ def load_case(path):
     where = path.name
 
     def value(name, entry):
-        v = Value(**entry)
-        if v.value is None:
-            return v
-        if v.source not in sources:
-            raise ValueError(f"{where}: {name} = {v.value!r} cites unknown source {v.source!r}")
-        if not v.location:
-            raise ValueError(f"{where}: {name} = {v.value!r} gives no location in its source")
-        if v.flag in REJECTED_FLAGS:
-            raise ValueError(f"{where}: {name} is flagged {v.flag}, which is not validation truth")
-        if not v.flag or any(f.strip() not in FLAGS for f in v.flag.split(",")):
-            raise ValueError(f"{where}: {name} has flag {v.flag!r}; expected some of {FLAGS}")
-        return v
+        return cited_value(where, name, entry, sources)
 
     raw_inputs = raw.get("inputs", {})
     missing = [name for name in INPUTS if name not in raw_inputs]
@@ -228,10 +233,10 @@ class QuantityError:
     worst_error: float  # largest in magnitude, with its sign
 
 
-def model_form_error(comparisons):
+def model_form_error(comparisons, quantities=QUANTITIES):
     """Model-Form Error per quantity, over every comparison that was made."""
     summary = []
-    for quantity in QUANTITIES:
+    for quantity in quantities:
         rows = [c for c in comparisons if c.quantity == quantity]
         if not rows:
             continue
