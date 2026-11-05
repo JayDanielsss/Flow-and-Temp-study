@@ -57,3 +57,18 @@ def test_study_ranks_feasible_designs_by_sample_heat_load_and_plots_profiles(tmp
     assert "heat_turbine_cap_conduction_w" in rows[0]
 
     assert (tmp_path / "temperature_profiles_top_designs.png").stat().st_size > 0
+
+
+def test_study_compares_cooling_paths_and_plots_sample_heat_load_against_cold_support_gap(tmp_path):
+    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
+              cold_support_gaps_mm=[0.01, 0.1, 1.0])
+
+    with open(tmp_path / "cold_support_gap_sweep.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    # One Vapour Cooling row, then one row per Cold Support gap.
+    assert [r["cooling_path"] for r in rows] == ["vapour"] + ["vapour_and_cold_support"] * 3
+    assert [float(r["cold_support_gap_mm"]) for r in rows[1:]] == [0.01, 0.1, 1.0]
+    shear = [float(r["heat_cold_support_shear_w"]) for r in rows[1:]]
+    assert shear == sorted(shear, reverse=True)
+
+    assert (tmp_path / "sample_heat_load_vs_cold_support_gap.png").stat().st_size > 0

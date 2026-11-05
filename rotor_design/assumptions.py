@@ -29,6 +29,9 @@ class Assumptions:
     turbine_efficiency: float
     rotor_stator_gap_mm: float
     accommodation_coefficient: float
+    cooling_path: str
+    cold_support_gap_mm: float
+    cold_support_gap_sweep_mm: tuple
     baseline_nozzle_count: int
     baseline_nozzle_throat_mm: float
     baseline_nozzle_angle_deg: float
@@ -51,7 +54,7 @@ def load_assumptions(path):
     geometry, sweep, allowance = raw["geometry"], raw["sweep"], raw["stator_allowance"]
     environment, drive, thermal = raw["environment"], raw["drive"], raw["thermal"]
     drag, baseline = raw["drag"], raw["design_baseline"]
-    rotor, materials = raw["rotor"], raw["materials"]
+    rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -79,6 +82,9 @@ def load_assumptions(path):
         turbine_efficiency=drive["turbine_efficiency"],
         rotor_stator_gap_mm=drag["rotor_stator_gap_mm"],
         accommodation_coefficient=drag["accommodation_coefficient"],
+        cooling_path=cold_support["cooling_path"],
+        cold_support_gap_mm=cold_support["gap_mm"],
+        cold_support_gap_sweep_mm=tuple(cold_support["gap_sweep_mm"]),
         baseline_nozzle_count=baseline["nozzle_count"],
         baseline_nozzle_throat_mm=baseline["nozzle_throat_mm"],
         baseline_nozzle_angle_deg=baseline["nozzle_angle_deg"],

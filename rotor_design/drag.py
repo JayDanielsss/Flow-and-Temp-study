@@ -1,4 +1,7 @@
-"""Windage drag on the Rotor in the gas gap to the Stator. SI units; Spin Rate in Hz."""
+"""Gas drag on the Rotor: windage in the gap to the Stator and shear in the Cold Support gap.
+
+SI units; Spin Rate in Hz.
+"""
 
 import math
 from dataclasses import dataclass
@@ -36,6 +39,27 @@ def windage_torque(radius_m, length_m, gap_m, spin_rate_hz, temperature_k, press
     torque_free_molecular = tau_free_molecular * area * r1
     torque = 1.0 / (1.0 / torque_continuum + 1.0 / torque_free_molecular)
 
+    return _in_regime(torque, temperature_k, pressure_pa, gap_m)
+
+
+def cold_support_shear_torque(radius_m, gap_m, spin_rate_hz, temperature_k, pressure_pa, accommodation=1.0):
+    """Drag torque on the Bottom Cap face turning a gap from the still Cold Support plate.
+
+    Narrow-gap Couette shear tau = mu omega r / gap in the continuum, kinetic-theory
+    shear in the free-molecular limit, joined harmonically as for windage_torque.
+    The same torque times omega is the heat generated in the gap.
+    """
+    omega = 2.0 * math.pi * spin_rate_hz
+    # Both limits are tau = c r; integrating c r * r * 2 pi r dr over the disc gives pi c R^4 / 2.
+    disc = math.pi * omega * radius_m**4 / 2.0
+    torque_continuum = vapour_viscosity(temperature_k) / gap_m * disc
+    torque_free_molecular = (accommodation / (2.0 - accommodation) * pressure_pa
+                             / math.sqrt(2.0 * math.pi * R_HELIUM * temperature_k) * disc)
+    torque = 1.0 / (1.0 / torque_continuum + 1.0 / torque_free_molecular)
+    return _in_regime(torque, temperature_k, pressure_pa, gap_m)
+
+
+def _in_regime(torque, temperature_k, pressure_pa, gap_m):
     kn = knudsen_number(temperature_k, pressure_pa, gap_m)
     if kn < CONTINUUM_MAX_KN:
         regime = "continuum"

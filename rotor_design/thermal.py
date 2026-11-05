@@ -1,6 +1,6 @@
 """Segmented 1-D fin along the Rotor axis. SI units.
 
-z = 0 is the Bottom Cap end (adiabatic unless a Cold Support is added);
+z = 0 is the Bottom Cap end (adiabatic unless a Cold Support cools it);
 z = length is the fin base, held at a fixed temperature (the Turbine Cap side).
 """
 
@@ -19,16 +19,24 @@ class FinProfile:
     temperature_k: np.ndarray
     cell_length_m: np.ndarray   # axial length each node represents
     base_heat_w: float          # heat entering through the base at z = length
+    tip_heat_out_w: float       # heat leaving through the tip conductance at z = 0
 
 
 def fin_profile(length_m, conductance, cooling, sink_temperature_k, base_temperature_k,
-                heat_per_length=None, n_nodes=_DEFAULT_NODES):
+                heat_per_length=None, n_nodes=_DEFAULT_NODES, tip_conductance=None,
+                tip_sink_temperature_k=None, tip_heat_w=0.0):
     """Steady temperature along a fin with temperature-dependent properties.
 
     conductance(z, T) -> axial k*A (W m/K); cooling(z, T) -> h*P to the sink (W/(m K));
-    heat_per_length(z) -> distributed heat input (W/m). Solved by finite volumes
-    with Picard iteration on the temperature-dependent properties.
+    heat_per_length(z) -> distributed heat input (W/m); tip_conductance(T) -> W/K from
+    the z = 0 end to tip_sink_temperature_k (default the sink); tip_heat_w enters at z = 0.
+    Solved by finite volumes with Picard iteration on the temperature-dependent properties.
     """
+    tip_sink = sink_temperature_k if tip_sink_temperature_k is None else tip_sink_temperature_k
+
+    def g_tip(t):
+        return 0.0 if tip_conductance is None else tip_conductance(t)
+
     z = np.linspace(0.0, length_m, n_nodes)
     dz = z[1] - z[0]
     cell = np.full(n_nodes, dz)
@@ -44,12 +52,14 @@ def fin_profile(length_m, conductance, cooling, sink_temperature_k, base_tempera
 
         a = np.zeros((n_nodes, n_nodes))
         b = source * cell + hp * sink_temperature_k
+        b[0] += tip_heat_w + g_tip(t[0]) * tip_sink
         for i in range(n_nodes - 1):
             a[i, i] += g[i]
             a[i + 1, i + 1] += g[i]
             a[i, i + 1] -= g[i]
             a[i + 1, i] -= g[i]
         a[np.diag_indices(n_nodes)] += hp
+        a[0, 0] += g_tip(t[0])
         a[-1, :] = 0.0
         a[-1, -1] = 1.0
         b[-1] = base_temperature_k
@@ -62,14 +72,15 @@ def fin_profile(length_m, conductance, cooling, sink_temperature_k, base_tempera
         raise RuntimeError("Fin temperature did not converge")
 
     hp = np.array([cooling(zi, ti) for zi, ti in zip(z, t)]) * cell
-    base_heat = float(np.sum(hp * (t - sink_temperature_k)) - np.sum(source * cell))
-    return FinProfile(z, t, cell, base_heat)
+    tip_out = float(g_tip(t[0]) * (t[0] - tip_sink))
+    base_heat = float(np.sum(hp * (t - sink_temperature_k)) - np.sum(source * cell) + tip_out - tip_heat_w)
+    return FinProfile(z, t, cell, base_heat, tip_out)
 
 
 STEFAN_BOLTZMANN = 5.670374419e-8
 
 HEAT_SOURCES = ("turbine_cap_conduction", "windage", "bearing_friction", "convection", "radiation",
-                "internal_load")
+                "internal_load", "cold_support_shear")
 
 
 @dataclass(frozen=True)
@@ -80,19 +91,23 @@ class RotorThermal:
     sample_hottest_temperature_k: float
     sample_heat_load_w: float
     breakdown_w: dict
+    cold_support_heat_out_w: float   # heat crossing the Cold Support gap to the Bath
 
 
 def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample_length_m,
                   wall_conductivity, sample_conductivity_w_m_k, sample_internal_heat_load_w,
                   turbine_cap_temperature_k, bath_temperature_k, stator_temperature_k,
                   vapour_pressure_pa, gap_m, accommodation, emissivity, windage_heat_per_length_w_m,
-                  sample_zone_delta_t_k, gap_heat_transfer_coefficient):
+                  sample_zone_delta_t_k, gap_heat_transfer_coefficient, cold_support_gap_m=None,
+                  cold_support_shear_heat_w=0.0):
     """Temperature along the Rotor body below the Turbine Cap, and the Sample Zone heat budget.
 
     Layout from z = 0: solid Bottom Cap, then the Sample inside the tube, then empty bore
     up to the Turbine Cap at z = body_length_m. Vapour Cooling and radiation exchange
     with the Stator across the gap; Stator radiation is absorbed as a source.
     The Sample's centre runs hotter than its wall by Q / (4 pi k L) under internal load.
+    With cold_support_gap_m set, the Bottom Cap face conducts across that gap to a Cold
+    Support at Bath temperature and receives cold_support_shear_heat_w from the gap shear.
     """
     r_o = outer_radius_m
     r_i = r_o - wall_m
@@ -129,9 +144,18 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
         return (windage_heat_per_length_w_m + radiation_in_per_area * perimeter
                 + (internal_per_length if in_sample(z) else 0.0))
 
+    if cold_support_gap_m is None:
+        cold_support, cold_support_shear_heat_w = None, 0.0
+    else:
+        def cold_support(t):
+            t_film = (t + bath_temperature_k) / 2.0
+            return (gap_heat_transfer_coefficient(t_film, vapour_pressure_pa, cold_support_gap_m, accommodation)
+                    * np.pi * r_o**2)
+
     # Cooling is referenced to the Stator; with the Stator at Bath temperature these coincide.
     fin = fin_profile(body_length_m, conductance, cooling, stator_temperature_k, turbine_cap_temperature_k,
-                      sources, n_nodes=_DEFAULT_NODES)
+                      sources, n_nodes=_DEFAULT_NODES, tip_conductance=cold_support,
+                      tip_sink_temperature_k=bath_temperature_k, tip_heat_w=cold_support_shear_heat_w)
     z, t, cell = fin.z_m, fin.temperature_k, fin.cell_length_m
 
     limit = bath_temperature_k + sample_zone_delta_t_k
@@ -147,7 +171,9 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     zone_cell = cell * in_zone
     cooling_out = np.array([cooling(zi, ti) for zi, ti in zip(z, t)]) * (t - stator_temperature_k)
     source_in = np.array([sources(zi) for zi in z])
-    conducted_in = float(np.sum((cooling_out - source_in) * zone_cell))
+    # The Bottom Cap face (z = 0) always lies in the Sample Zone.
+    conducted_in = float(np.sum((cooling_out - source_in) * zone_cell)
+                         + fin.tip_heat_out_w - cold_support_shear_heat_w)
     sample_mask = np.array([in_sample(zi) for zi in z])
     breakdown = {
         "turbine_cap_conduction": conducted_in,
@@ -156,9 +182,10 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
         "convection": 0.0,         # no gas warmer than the Rotor reaches the Sample Zone yet
         "radiation": float(radiation_in_per_area * perimeter * np.sum(zone_cell)),
         "internal_load": float(internal_per_length * np.sum(zone_cell * sample_mask)),
+        "cold_support_shear": float(cold_support_shear_heat_w),
     }
 
     radial_rise = (sample_internal_heat_load_w / (4.0 * np.pi * sample_conductivity_w_m_k * sample_length_m)
                    if sample_length_m > 0 else 0.0)
     hottest = float(np.max(t[sample_mask])) + radial_rise if sample_mask.any() else float("nan")
-    return RotorThermal(z, t, zone, hottest, float(sum(breakdown.values())), breakdown)
+    return RotorThermal(z, t, zone, hottest, float(sum(breakdown.values())), breakdown, fin.tip_heat_out_w)

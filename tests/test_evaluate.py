@@ -1,11 +1,12 @@
 """Evaluate one Design: Design plus assumptions in, Results out."""
 
+import math
 from pathlib import Path
 
 import pytest
 
 from rotor_design.assumptions import load_assumptions
-from rotor_design.evaluate import Design, evaluate
+from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, evaluate
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
 
@@ -94,7 +95,7 @@ def test_drive_gas_temperature_defaults_to_10k_and_warmer_gas_needs_less_flow(as
 
 
 HEAT_SOURCES = {"turbine_cap_conduction", "windage", "bearing_friction", "convection", "radiation",
-                "internal_load"}
+                "internal_load", "cold_support_shear"}
 
 
 def test_baseline_reports_temperature_profile_sample_zone_and_heat_load(assumptions):
@@ -140,3 +141,51 @@ def test_lower_sample_conductivity_gives_hotter_sample(assumptions):
                            sample_conductivity_w_m_k=0.01), assumptions)
     assert poor.sample_hottest_temperature_k > good.sample_hottest_temperature_k
     assert poor.sample_heat_load_breakdown_w["internal_load"] == pytest.approx(1e-5, rel=1e-6)
+
+
+def test_cooling_path_defaults_to_vapour_only_with_no_cold_support_terms(assumptions):
+    results = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert results.cooling_path == VAPOUR_ONLY
+    assert results.cold_support_drag_torque_n_m == 0.0
+    assert results.cold_support_heat_to_bath_w == 0.0
+    assert results.sample_heat_load_breakdown_w["cold_support_shear"] == 0.0
+
+
+def test_unknown_cooling_path_is_rejected(assumptions):
+    with pytest.raises(ValueError, match="cooling path"):
+        evaluate(Design(rotor_length_mm=20.0, cooling_path="liquid"), assumptions)
+
+
+def test_cold_support_gap_shear_adds_to_drag_torque_and_sample_heat_load(assumptions):
+    vapour = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    cold = evaluate(Design(rotor_length_mm=20.0, cooling_path=COLD_SUPPORT, cold_support_gap_mm=0.01),
+                    assumptions)
+    assert cold.cooling_path == COLD_SUPPORT
+    assert cold.cold_support_gap_mm == 0.01
+    assert cold.cold_support_drag_torque_n_m > 0.0
+    assert cold.drag_torque_n_m == pytest.approx(vapour.drag_torque_n_m + cold.cold_support_drag_torque_n_m)
+    assert cold.turbine_torque_n_m == pytest.approx(cold.drag_torque_n_m, rel=1e-3)
+    assert cold.required_mass_flow_kg_s > vapour.required_mass_flow_kg_s
+    # All gap shear heat enters the Rotor at the placeholder windage_heat_to_rotor_fraction of 1.
+    shear_heat = cold.cold_support_drag_torque_n_m * 2.0 * math.pi * 1000.0
+    assert cold.sample_heat_load_breakdown_w["cold_support_shear"] == pytest.approx(shear_heat)
+    assert cold.cold_support_heat_to_bath_w > shear_heat
+
+
+def test_cold_support_gap_defaults_from_assumptions_file(assumptions):
+    results = evaluate(Design(rotor_length_mm=20.0, cooling_path=COLD_SUPPORT), assumptions)
+    assert results.cold_support_gap_mm == assumptions.cold_support_gap_mm
+
+
+def test_smaller_cold_support_gap_cools_sample_until_shear_heating_dominates(assumptions):
+    gaps_mm = assumptions.cold_support_gap_sweep_mm
+    hottest = [evaluate(Design(rotor_length_mm=20.0, cooling_path=COLD_SUPPORT, cold_support_gap_mm=g),
+                        assumptions).sample_hottest_temperature_k for g in gaps_mm]
+    vapour = evaluate(Design(rotor_length_mm=20.0), assumptions).sample_hottest_temperature_k
+    coolest = min(range(len(gaps_mm)), key=hottest.__getitem__)
+    assert 0 < coolest < len(gaps_mm) - 1
+    # Wide gaps: each step smaller cools the Sample; the widest barely beats Vapour Cooling alone.
+    assert hottest[coolest:] == sorted(hottest[coolest:])
+    assert hottest[-1] < vapour
+    # Narrow gaps: shear heating grows faster than gap conduction and warms the Sample again.
+    assert hottest[:coolest + 1] == sorted(hottest[:coolest + 1], reverse=True)

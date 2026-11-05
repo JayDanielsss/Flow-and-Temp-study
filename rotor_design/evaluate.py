@@ -3,7 +3,7 @@
 import math
 from dataclasses import dataclass
 
-from rotor_design.drag import windage_torque
+from rotor_design.drag import cold_support_shear_torque, windage_torque
 from rotor_design.gas import gap_heat_transfer_coefficient
 from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
@@ -20,6 +20,11 @@ _PRESSURE_SEARCH_CEILING = 10.0
 _PRESSURE_REL_TOLERANCE = 1e-6
 _MARGIN_TOLERANCE = 1e-9
 
+# Cooling paths, part of the Configuration.
+VAPOUR_ONLY = "vapour"
+COLD_SUPPORT = "vapour_and_cold_support"
+COOLING_PATHS = (VAPOUR_ONLY, COLD_SUPPORT)
+
 
 @dataclass(frozen=True)
 class Design:
@@ -35,6 +40,8 @@ class Design:
     sample_length_mm: float | None = None
     sample_conductivity_w_m_k: float | None = None
     sample_internal_heat_load_w: float | None = None
+    cooling_path: str | None = None
+    cold_support_gap_mm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -58,13 +65,17 @@ class Results:
     nozzle_choked: bool
     jet_velocity_m_s: float
     turbine_torque_n_m: float
-    drag_torque_n_m: float
+    drag_torque_n_m: float          # windage plus Cold Support gap shear
     windage_regime: str
     knudsen_number: float
     wall_thickness_mm: float
     sample_length_mm: float
     sample_conductivity_w_m_k: float
     sample_internal_heat_load_w: float
+    cooling_path: str
+    cold_support_gap_mm: float      # nan without a Cold Support
+    cold_support_drag_torque_n_m: float
+    cold_support_heat_to_bath_w: float
     z_mm: tuple
     temperature_k: tuple
     sample_zone_mm: float
@@ -107,8 +118,18 @@ def evaluate(design, assumptions):
     back_p = a.environment_pressure_torr * PA_PER_TORR
     radius_m = max(diameter, 0.0) / 2e3
 
+    cooling_path = _or(design.cooling_path, a.cooling_path)
+    if cooling_path not in COOLING_PATHS:
+        raise ValueError(f"Unknown cooling path {cooling_path!r}; expected one of {COOLING_PATHS}")
     windage = windage_torque(radius_m, design.rotor_length_mm / 1e3, a.rotor_stator_gap_mm / 1e3, spin,
                              a.environment_temperature_k, back_p, a.accommodation_coefficient)
+    if cooling_path == COLD_SUPPORT:
+        cold_gap_mm = _or(design.cold_support_gap_mm, a.cold_support_gap_mm)
+        cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, a.environment_temperature_k,
+                                                back_p, a.accommodation_coefficient).torque_n_m
+    else:
+        cold_gap_mm, cold_torque = math.nan, 0.0
+    drag_torque = windage.torque_n_m + cold_torque
 
     def drive(supply_p):
         flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient)
@@ -116,7 +137,7 @@ def evaluate(design, assumptions):
                                                   radius_m, spin, a.turbine_efficiency)
         return flow, torque
 
-    supply_p = _required_supply_pressure(drive, windage.torque_n_m, back_p,
+    supply_p = _required_supply_pressure(drive, drag_torque, back_p,
                                          _PRESSURE_SEARCH_CEILING * a.max_supply_pressure_bar * PA_PER_BAR)
     if math.isfinite(supply_p):
         flow, turbine_torque = drive(supply_p)
@@ -152,6 +173,8 @@ def evaluate(design, assumptions):
         windage_heat_per_length_w_m=windage_heat,
         sample_zone_delta_t_k=a.sample_zone_delta_t_k,
         gap_heat_transfer_coefficient=gap_heat_transfer_coefficient,
+        cold_support_gap_m=None if cooling_path == VAPOUR_ONLY else cold_gap_mm / 1e3,
+        cold_support_shear_heat_w=cold_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction,
     )
     sample_zone_mm = thermal.sample_zone_m * 1e3
     sample_limit_k = a.environment_temperature_k + a.sample_zone_delta_t_k
@@ -188,13 +211,17 @@ def evaluate(design, assumptions):
         nozzle_choked=choked,
         jet_velocity_m_s=jet_v,
         turbine_torque_n_m=turbine_torque,
-        drag_torque_n_m=windage.torque_n_m,
+        drag_torque_n_m=drag_torque,
         windage_regime=windage.regime,
         knudsen_number=windage.knudsen_number,
         wall_thickness_mm=wall_mm,
         sample_length_mm=sample_mm,
         sample_conductivity_w_m_k=sample_k,
         sample_internal_heat_load_w=sample_q,
+        cooling_path=cooling_path,
+        cold_support_gap_mm=cold_gap_mm,
+        cold_support_drag_torque_n_m=cold_torque,
+        cold_support_heat_to_bath_w=thermal.cold_support_heat_out_w,
         z_mm=tuple(thermal.z_m * 1e3),
         temperature_k=tuple(thermal.temperature_k),
         sample_zone_mm=sample_zone_mm,
