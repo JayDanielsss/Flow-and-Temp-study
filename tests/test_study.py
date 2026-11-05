@@ -85,8 +85,11 @@ def test_study_compares_bearing_configurations_without_excluded_combinations(tmp
     assert {r["exhaust_path"] for r in rows} == {"vented", "ducted"}
     assert all(r["bearing"] == "two_center_pivot" for r in rows if r["pivot_to_bath"] == "True")
     for column in ("bearing_friction_torque_n_m", "bearing_stiffness_n_m", "bearing_radial_space_mm",
-                   "heat_bearing_friction_w", "warning", "bath_heat_load_w", "pumping_speed_m3_s"):
+                   "heat_bearing_friction_w", "warning", "bath_heat_load_w", "pumping_speed_m3_s",
+                   "peak_hoop_stress_mpa", "stress_safety_factor", "first_rigid_body_critical_hz",
+                   "second_rigid_body_critical_hz", "bending_critical_hz", "whirl_threshold_hz"):
         assert column in rows[0]
+    assert all(r["whirl_threshold_hz"] != "nan" for r in rows if r["bearing"] == "gas")
     assert all(r["warning"] for r in rows if r["bearing"] == "mechanical")
 
 

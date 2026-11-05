@@ -397,3 +397,63 @@ def test_design_over_the_bath_cooling_power_is_ruled_out_by_bath_heat_load(assum
     assert starved.bath_heat_load_w == pytest.approx(load)
     assert not starved.feasible
     assert starved.binding_constraint == "Bath Heat Load"
+
+
+def test_results_report_peak_stress_safety_factor_and_every_critical_speed(assumptions):
+    r = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    # Surface speed ~25 m/s: hoop stress a few MPa against 550 MPa tensile strength.
+    assert 0.0 < r.peak_radial_stress_mpa < r.peak_hoop_stress_mpa < 10.0
+    assert r.stress_safety_factor == pytest.approx(550.0 / r.peak_hoop_stress_mpa)
+    assert r.rotor_mass_kg > 0.0
+    assert 0.0 < r.first_rigid_body_critical_hz <= r.second_rigid_body_critical_hz < r.bending_critical_hz
+    assert math.isnan(r.whirl_threshold_hz)
+    assert r.critical_speed_separation > 0.2
+    assert r.feasible
+
+
+def test_required_safety_factor_above_the_achieved_one_is_ruled_out_by_stress(assumptions):
+    design = Design(rotor_length_mm=20.0)
+    achieved = evaluate(design, assumptions).stress_safety_factor
+    r = evaluate(design, replace(assumptions, required_safety_factor=2.0 * achieved))
+    assert not r.feasible
+    assert r.binding_constraint == "Stress"
+
+
+def _with_mechanical_stiffness_scaled(assumptions, scale):
+    mechanical = assumptions.bearings[MECHANICAL]
+    bearings = {**assumptions.bearings, MECHANICAL: replace(mechanical, stiffness_n_m=mechanical.stiffness_n_m * scale)}
+    return replace(assumptions, bearings=bearings)
+
+
+@pytest.mark.parametrize("ratio, inside", [(0.85, True), (1.15, True), (0.45, False), (1.25, False)])
+def test_critical_speed_within_20_percent_of_target_is_ruled_out(assumptions, ratio, inside):
+    # Rigid-body critical speeds scale with sqrt(stiffness): place the lowest at ratio x 1000 Hz.
+    # The conical one sits ~1.6x higher, so 0.45 keeps both below the band (450 and ~720 Hz).
+    design = Design(rotor_length_mm=20.0, bearing=MECHANICAL)
+    lowest = evaluate(design, assumptions).first_rigid_body_critical_hz
+    r = evaluate(design, _with_mechanical_stiffness_scaled(assumptions, (ratio * 1000.0 / lowest) ** 2))
+    assert r.first_rigid_body_critical_hz == pytest.approx(ratio * 1000.0)
+    nearest = min(abs(f - 1000.0) / 1000.0 for f in (r.first_rigid_body_critical_hz,
+                                                     r.second_rigid_body_critical_hz, r.bending_critical_hz))
+    assert r.critical_speed_separation == pytest.approx(nearest)
+    assert (r.critical_speed_separation < 0.2) == inside
+    if inside:
+        assert not r.feasible
+        assert r.binding_constraint == "Critical Speed"
+    else:
+        assert r.binding_constraint != "Critical Speed"
+
+
+def test_gas_bearing_reports_whirl_threshold_and_is_ruled_out_below_it(assumptions):
+    design = Design(rotor_length_mm=20.0, bearing=GAS)
+    baseline = evaluate(design, assumptions)
+    assert baseline.whirl_threshold_hz == pytest.approx(2.0 * baseline.first_rigid_body_critical_hz)
+    # Rigid-body critical speeds at 450 and ~710 Hz: clear of the band, but whirl sets in at 900 Hz.
+    gas = assumptions.bearings[GAS]
+    scale = (450.0 / baseline.first_rigid_body_critical_hz) ** 2
+    bearings = {**assumptions.bearings, GAS: replace(gas, stiffness_coefficient=gas.stiffness_coefficient * scale)}
+    r = evaluate(design, replace(assumptions, bearings=bearings))
+    assert r.whirl_threshold_hz == pytest.approx(900.0)
+    assert r.critical_speed_separation > 0.2
+    assert not r.feasible
+    assert r.binding_constraint == "Whirl"

@@ -3,12 +3,15 @@
 import math
 from dataclasses import dataclass, replace
 
-from rotor_design.bearing import BEARING_TYPES, TWO_CENTER_PIVOT, pivot_contact_conductance
+from rotor_design.bearing import BEARING_TYPES, GAS, TWO_CENTER_PIVOT, pivot_contact_conductance
 from rotor_design.drag import cold_support_shear_torque, windage_torque
 from rotor_design.gas import R_HELIUM, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
 from rotor_design.nozzle import nozzle_flow
+from rotor_design.rotordynamics import (first_bending_mode_hz, half_frequency_whirl_threshold_hz,
+                                        rigid_body_critical_speeds_hz, rotor_mass_properties)
+from rotor_design.stress import rotating_tube_stress
 from rotor_design.thermal import rotor_thermal
 from rotor_design.turbine import RADIAL_INFLOW, TURBINE_TYPES
 
@@ -129,6 +132,15 @@ class Results:
     exhaust_heat_to_bath_w: float   # Vented Drive Gas cooled to Bath vapour; 0 when Ducted
     pumping_speed_m3_s: float       # to hold the environment pressure against the Vented gas; nan when Ducted
     bath_heat_load_w: float
+    rotor_mass_kg: float            # zirconia only; the Sample is not included
+    peak_hoop_stress_mpa: float
+    peak_radial_stress_mpa: float
+    stress_safety_factor: float     # tensile strength over peak hoop stress
+    first_rigid_body_critical_hz: float
+    second_rigid_body_critical_hz: float  # nan when the Rotor has no conical critical speed
+    bending_critical_hz: float
+    whirl_threshold_hz: float       # gas bearings only; nan otherwise
+    critical_speed_separation: float  # nearest critical speed's distance from the Target Spin Rate, as a fraction
     feasible: bool
     binding_constraint: str
 
@@ -197,10 +209,12 @@ def evaluate(design, assumptions):
     else:
         cold_gap_mm, cold_torque = math.nan, 0.0
     wall_mm = _or(design.wall_thickness_mm, a.baseline_wall_thickness_mm)
+    length_m, inner_radius_m = design.rotor_length_mm / 1e3, max(radius_m - wall_mm / 1e3, 0.0)
+    body = rotor_mass_properties(radius_m, inner_radius_m, length_m, a.bottom_cap_thickness_mm / 1e3,
+                                 a.turbine_cap_height_mm / 1e3, ZIRCONIA.density_kg_m3)
     bearing_load = bearing_model.performance(
         rotor_radius_m=radius_m,
-        rotor_weight_n=_rotor_weight_n(radius_m, wall_mm / 1e3, body_length_mm / 1e3,
-                                       a.bottom_cap_thickness_mm / 1e3, a.turbine_cap_height_mm / 1e3),
+        rotor_weight_n=body.mass_kg * STANDARD_GRAVITY,
         spin_rate_hz=spin,
         bath_temperature_k=a.environment_temperature_k,
         ambient_pressure_pa=vapour_p,
@@ -279,10 +293,27 @@ def evaluate(design, assumptions):
         bath_load = sources_w + thermal.turbine_cap_heat_in_w
     sample_limit_k = a.environment_temperature_k + a.sample_zone_delta_t_k
 
+    stress = rotating_tube_stress(radius_m, inner_radius_m, spin, ZIRCONIA.density_kg_m3, ZIRCONIA.poissons_ratio)
+    safety_factor = ZIRCONIA.tensile_strength_pa / stress.peak_hoop_pa if stress.peak_hoop_pa > 0.0 else math.inf
+    # Bearing stations at the two ends of the Rotor.
+    rigid = rigid_body_critical_speeds_hz(body.mass_kg, body.transverse_inertia_kg_m2, body.polar_inertia_kg_m2,
+                                          bearing_load.stiffness_n_m, body.centre_of_mass_m,
+                                          length_m - body.centre_of_mass_m)
+    bending = (first_bending_mode_hz(length_m, radius_m, inner_radius_m, ZIRCONIA.youngs_modulus_pa,
+                                     ZIRCONIA.density_kg_m3) if radius_m > 0.0 else math.nan)
+    criticals = [f for f in (*rigid, bending) if math.isfinite(f)]
+    separation = min((abs(f - spin) / spin for f in criticals), default=math.inf)
+    whirl = half_frequency_whirl_threshold_hz(rigid, a.whirl_onset_ratio) if bearing == GAS and rigid else math.nan
+    # Gas-bearing whirl must stay clear above the Target Spin Rate by the same separation.
+    whirl_limit_hz = spin * (1.0 + a.critical_speed_separation)
+
     # Each constraint's fractional margin; the smallest is the Binding Constraint.
     margins = {
         "Probe Bore": (usable_bore - width) / usable_bore if diameter > 0.0 else -1.0,
         "Supply Pressure": (a.max_supply_pressure_bar - supply_bar) / a.max_supply_pressure_bar,
+        "Stress": (safety_factor - a.required_safety_factor) / a.required_safety_factor,
+        "Critical Speed": (separation - a.critical_speed_separation) / a.critical_speed_separation,
+        "Whirl": whirl / whirl_limit_hz - 1.0 if math.isfinite(whirl) else math.inf,
         "Sample Zone": (sample_zone_mm - a.min_sample_zone_mm) / a.min_sample_zone_mm,
         "Sample Temperature": (sample_limit_k - thermal.sample_hottest_temperature_k) / a.sample_zone_delta_t_k,
         "Bath Heat Load": (a.bath_cooling_power_w - bath_load) / a.bath_cooling_power_w,
@@ -344,19 +375,23 @@ def evaluate(design, assumptions):
         exhaust_heat_to_bath_w=exhaust_heat,
         pumping_speed_m3_s=pumping_speed,
         bath_heat_load_w=bath_load,
+        rotor_mass_kg=body.mass_kg,
+        peak_hoop_stress_mpa=stress.peak_hoop_pa / 1e6,
+        peak_radial_stress_mpa=stress.peak_radial_pa / 1e6,
+        stress_safety_factor=safety_factor,
+        first_rigid_body_critical_hz=rigid[0] if rigid else math.nan,
+        second_rigid_body_critical_hz=rigid[1] if len(rigid) > 1 else math.nan,
+        bending_critical_hz=bending,
+        whirl_threshold_hz=whirl,
+        critical_speed_separation=separation,
         feasible=(fits and reaches_spin and sample_zone_mm >= a.min_sample_zone_mm
                   and thermal.sample_hottest_temperature_k <= sample_limit_k
-                  and bath_load <= a.bath_cooling_power_w),
+                  and bath_load <= a.bath_cooling_power_w
+                  and safety_factor >= a.required_safety_factor
+                  and separation >= a.critical_speed_separation
+                  and not whirl < whirl_limit_hz),
         binding_constraint=binding,
     )
-
-
-def _rotor_weight_n(radius_m, wall_m, body_length_m, bottom_cap_m, turbine_cap_m):
-    """Weight of the zirconia Rotor: tube, solid Bottom Cap and solid Turbine Cap; the Sample is not included."""
-    r_i = max(radius_m - wall_m, 0.0)
-    tube = math.pi * (radius_m**2 - r_i**2) * (body_length_m - bottom_cap_m)
-    caps = math.pi * radius_m**2 * (bottom_cap_m + turbine_cap_m)
-    return ZIRCONIA.density_kg_m3 * (tube + caps) * STANDARD_GRAVITY
 
 
 def _required_supply_pressure(drive, drag_torque, back_pressure, ceiling):
