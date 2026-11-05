@@ -1,0 +1,34 @@
+# Benchmark Case K3: 9.5 mm sapphire sphere, single jet, at room temperature and with ~100 K nitrogen.
+# Volumetric flows (34.4 L/min warm; 28 + 30 L/min cold) are not converted: standard or actual
+# flow is not stated, so there is no mass flow to compare.
+id = "K3"
+name = "Price et al. 2023: 9.5 mm sapphire sphere at room temperature and 94 K"
+
+[sources]
+price2023 = "L. E. Price, N. Alaniva, M. Millen, T. Epprecht, M. Urban, A. Dapp, A. B. Barnes, \"Cryogenic-compatible spherical rotors and stators for [...],\" [...] Reson. 4, 231-241 (2023). https://doi.org/10.5194/mr-4-231-2023 (also https://pmc.ncbi.nlm.nih.gov/articles/PMC10539783/)"
+
+[inputs]
+drive_gas = { note = "room-temperature run: not stated" }
+rotor_material = { value = "sapphire", source = "price2023", location = "§2.2", flag = "M" }
+rotor_length_mm = { note = "sphere; no Rotor Length" }
+rotor_diameter_mm = { value = 9.5, source = "price2023", location = "§2.2", flag = "M" }
+wall_thickness_mm = { note = "sphere; no tube wall" }
+bearing = { value = "single drive jet", source = "price2023", location = "§1", flag = "M" }
+drive_gas_temperature_k = { note = "room-temperature run: not stated" }
+environment_temperature_k = { note = "not stated" }
+environment_pressure_bar = { note = "not stated" }
+turbine = { note = "smooth sphere at a single aperture; no Turbine" }
+nozzle_count = { value = 1, source = "price2023", location = "§2.1; Fig. 1", flag = "M" }
+nozzle_throat_mm = { note = "not reported" }
+nozzle_angle_deg = { note = "not reported" }
+back_pressure_bar = { note = "not stated" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 3700.0, source = "price2023", location = "§3.1", flag = "M" }
+measured.supply_pressure_bar = { value = 3.0, source = "price2023", location = "§3.1 (gauge or absolute not stated)", flag = "M, U" }
+
+[[points]]
+inputs.drive_gas = { value = "nitrogen", source = "price2023", location = "§2.5", flag = "M" }
+inputs.drive_gas_temperature_k = { value = 100.0, source = "price2023", location = "§3.1 (spinning gas at 100 K)", flag = "M" }
+inputs.spin_rate_hz = { value = 2000.0, source = "price2023", location = "§3.1", flag = "M" }
+measured.sample_temperature_k = { value = 94.0, source = "price2023", location = "§3.1", flag = "M" }

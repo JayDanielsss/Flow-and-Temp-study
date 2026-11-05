@@ -1,0 +1,65 @@
+# Benchmark Case K1, 0.7 mm Rotor, room-temperature air. Friction power is the authors'
+# mass flow x c_p x temperature rise (Eq. 7). Fig. 6 drive pressure: relative or absolute not stated
+# on the axis; Spin Rate not given for its points. Torque and efficiency in the paper are CFD only.
+# The authors' CFD under-predicts the 0.7 mm flow by about 36 % (Nozzle fabrication tolerance, §3.1).
+id = "K1-0p7"
+name = "Herzog et al. 2022: 0.7 mm Pelton Turbine in room-temperature air"
+
+[sources]
+herzog2022 = "N. Herzog, A. Weber, A. Purea, D. Osen, B. Knott, F. Engelke, D. Wilhelm, \"Ultra Low Temperature Microturbine for [...] System,\" J. Fluids Eng. 144(8), 081205 (2022). https://doi.org/10.1115/1.4053746 (open access: https://digitalcollection.zhaw.ch/handle/11475/24642)"
+
+[inputs]
+drive_gas = { value = "air", source = "herzog2022", location = "§2.4", flag = "M" }
+rotor_material = { note = "not reported" }
+rotor_length_mm = { note = "not reported" }
+rotor_diameter_mm = { value = 0.7, source = "herzog2022", location = "§2; Table 2", flag = "M" }
+wall_thickness_mm = { note = "not reported" }
+bearing = { value = "gas", source = "herzog2022", location = "§2 (two radial gas Bearings, 5 Nozzles each)", flag = "M" }
+drive_gas_temperature_k = { value = 293.0, source = "herzog2022", location = "§2.4", flag = "M" }
+environment_temperature_k = { note = "not reported" }
+environment_pressure_bar = { note = "not reported" }
+turbine = { value = "pelton", source = "herzog2022", location = "§2.3 (5 blades)", flag = "M" }
+nozzle_count = { value = 8, source = "herzog2022", location = "§2.3; §2 (inlet tubes from an intake spiral)", flag = "M" }
+nozzle_throat_mm = { note = "not reported" }
+nozzle_angle_deg = { note = "not reported" }
+back_pressure_bar = { value = 1.0, source = "herzog2022", location = "§3.1 (ambient)", flag = "M" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 10000.0, source = "herzog2022", location = "Fig. 10", flag = "F" }
+measured.drag_power_w = { value = 0.2, source = "herzog2022", location = "Fig. 10 (in-situ)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 40000.0, source = "herzog2022", location = "Fig. 10", flag = "F" }
+measured.drag_power_w = { value = 0.2, source = "herzog2022", location = "Fig. 10 (in-situ)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 60000.0, source = "herzog2022", location = "Fig. 10", flag = "F" }
+measured.drag_power_w = { value = 0.6, source = "herzog2022", location = "Fig. 10 (in-situ)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 80000.0, source = "herzog2022", location = "Fig. 10", flag = "F" }
+measured.drag_power_w = { value = 1.15, source = "herzog2022", location = "Fig. 10 (in-situ)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 100000.0, source = "herzog2022", location = "Fig. 10", flag = "F" }
+measured.drag_power_w = { value = 1.7, source = "herzog2022", location = "Fig. 10 (in-situ)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { note = "not given for Fig. 6 points" }
+measured.supply_pressure_bar = { value = 2.1, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }
+measured.mass_flow_kg_s = { value = 0.65e-4, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }
+
+[[points]]
+inputs.spin_rate_hz = { note = "not given for Fig. 6 points" }
+measured.supply_pressure_bar = { value = 2.8, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }
+measured.mass_flow_kg_s = { value = 0.85e-4, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }
+
+[[points]]
+inputs.spin_rate_hz = { note = "not given for Fig. 6 points" }
+measured.supply_pressure_bar = { value = 4.4, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }
+measured.mass_flow_kg_s = { value = 1.4e-4, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }
+
+[[points]]
+inputs.spin_rate_hz = { note = "not given for Fig. 6 points" }
+measured.supply_pressure_bar = { value = 5.0, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }
+measured.mass_flow_kg_s = { value = 1.6e-4, source = "herzog2022", location = "Fig. 6 (0.7mm, exp.)", flag = "F, U" }

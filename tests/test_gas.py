@@ -2,8 +2,9 @@
 
 import pytest
 
-from rotor_design.gas import (gap_heat_transfer_coefficient, knudsen_number, mean_free_path,
-                              vapour_enthalpy, vapour_thermal_conductivity, vapour_viscosity)
+from rotor_design.gas import (AIR, GASES, HELIUM, NITROGEN, gap_heat_transfer_coefficient, knudsen_number,
+                              mean_free_path, stagnation_state, vapour_enthalpy, vapour_thermal_conductivity,
+                              vapour_viscosity)
 
 
 def test_vapour_viscosity_at_tabulated_point():
@@ -44,3 +45,42 @@ def test_vapour_enthalpy_difference_in_the_dilute_limit_is_five_halves_r_delta_t
     #   2.5 * 2077.26 J/(kg K) * 8.8 K = 45,700 J/kg
     drop = vapour_enthalpy(10.0, 26.6645) - vapour_enthalpy(1.2, 26.6645)
     assert drop == pytest.approx(45_700, rel=1e-3)
+
+
+def test_gases_carry_specific_gas_constant_and_dilute_cp():
+    # R = 8.314462618 / M: helium 2077.26, nitrogen 296.80, air 287.05 J/(kg K)
+    assert set(GASES) == {"helium", "nitrogen", "air"}
+    assert HELIUM.specific_gas_constant == pytest.approx(2077.26, rel=1e-5)
+    assert NITROGEN.specific_gas_constant == pytest.approx(296.80, rel=1e-4)
+    assert AIR.specific_gas_constant == pytest.approx(287.05, rel=1e-4)
+    # cp = gamma / (gamma - 1) R: 5/2 R for helium, 7/2 R for the diatomic gases
+    assert HELIUM.cp_dilute == pytest.approx(2.5 * 2077.26, rel=1e-5)
+    assert NITROGEN.cp_dilute == pytest.approx(3.5 * 296.80, rel=1e-4)
+
+
+@pytest.mark.parametrize("gas, mu, k", [
+    # Incropera & DeWitt, Fundamentals of Heat and Mass Transfer, Table A.4, 1 atm, 300 K.
+    (NITROGEN, 178.2e-7, 25.9e-3),
+    (AIR, 184.6e-7, 26.3e-3),
+])
+def test_diatomic_transport_at_300k_matches_tabulated_values(gas, mu, k):
+    assert vapour_viscosity(300.0, gas) == pytest.approx(mu, rel=1e-2)
+    assert vapour_thermal_conductivity(300.0, gas) == pytest.approx(k, rel=1e-2)
+
+
+def test_diatomic_enthalpy_difference_near_ideal_is_seven_halves_r_delta_t():
+    # Nitrogen at 1 bar, 300 K to 200 K: 3.5 * 296.80 * 100 = 103,880 J/kg (ideal to about 0.5 %)
+    drop = vapour_enthalpy(300.0, 1e5, NITROGEN) - vapour_enthalpy(200.0, 1e5, NITROGEN)
+    assert drop == pytest.approx(103_880, rel=5e-3)
+
+
+@pytest.mark.parametrize("call", [
+    lambda: vapour_viscosity(10.0, NITROGEN),
+    lambda: vapour_thermal_conductivity(50.0, AIR),
+    lambda: vapour_enthalpy(1.2, 26.6645, NITROGEN),
+    lambda: stagnation_state(10.0, 1e5, AIR),
+    lambda: vapour_viscosity(0.9),
+])
+def test_properties_below_a_gas_data_range_raise(call):
+    with pytest.raises(ValueError, match="No .* property data below"):
+        call()

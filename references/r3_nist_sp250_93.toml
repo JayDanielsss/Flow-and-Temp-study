@@ -1,0 +1,19 @@
+# Reference Case R3a: spinning rotor gauge calibration in nitrogen, free-molecular limit.
+# sigma_eff is the measured drag over the ideal full-accommodation drag (Eq. 5-7).
+id = "R3a"
+name = "NIST SP 250-93: spinning rotor gauge calibration in nitrogen"
+mechanism = "rarefied_drag"
+
+[sources]
+berg2015 = "R. F. Berg, J. A. Fedchak, \"NIST Calibration Services for Spinning Rotor Gauge Calibrations,\" NIST Special Publication 250-93 (2015). https://doi.org/10.6028/NIST.SP.250-93"
+
+[inputs]
+gas = { value = "nitrogen", source = "berg2015", location = "Appendix, report p. 2", flag = "M" }
+ball_diameter_mm = { value = 4.493, source = "berg2015", location = "Appendix, report p. 2 (rotor s/n 191459)", flag = "M" }
+ball_density_g_cm3 = { value = 7.806, source = "berg2015", location = "Appendix, report p. 2", flag = "M" }
+gas_temperature_k = { value = 296.0, source = "berg2015", location = "Section 7.1 (typical chamber temperature)", flag = "M, U", note = "not given for this run" }
+pressure_pa = { value = 0.02, source = "berg2015", location = "Appendix, report p. 3 (typical)", flag = "M" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 410.0, source = "berg2015", location = "Appendix, report pp. 2-3 (reference speed)", flag = "M" }
+measured.effective_accommodation = { value = 0.9650, source = "berg2015", location = "Appendix, report p. 2 (U = 0.38 %, k = 2)", flag = "M" }

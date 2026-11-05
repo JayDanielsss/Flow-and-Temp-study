@@ -3,7 +3,7 @@
 import math
 from dataclasses import dataclass
 
-from rotor_design.gas import isentropic_state, stagnation_state
+from rotor_design.gas import HELIUM, isentropic_state, stagnation_state
 
 _GOLDEN = (math.sqrt(5.0) - 1.0) / 2.0
 _SEARCH_ITERATIONS = 40  # brackets the peak to 1e-8 of p0
@@ -19,7 +19,7 @@ class NozzleFlow:
 
 
 def nozzle_flow(supply_pressure_pa, supply_temperature_k, back_pressure_pa, throat_diameter_m,
-                discharge_coefficient):
+                discharge_coefficient, gas=HELIUM):
     """Flow through one converging Nozzle from stagnation supply to back pressure.
 
     The throat sits at whichever pressure between back and supply maximises the
@@ -27,14 +27,14 @@ def nozzle_flow(supply_pressure_pa, supply_temperature_k, back_pressure_pa, thro
     """
     if supply_pressure_pa <= back_pressure_pa:
         return NozzleFlow(0.0, 0.0, back_pressure_pa, False)
-    h0, s0 = stagnation_state(supply_temperature_k, supply_pressure_pa)
+    h0, s0 = stagnation_state(supply_temperature_k, supply_pressure_pa, gas)
 
     def flux_and_velocity(p):
-        h, rho = isentropic_state(p, s0)
+        h, rho = isentropic_state(p, s0, gas)
         v = math.sqrt(max(2.0 * (h0 - h), 0.0))
         return rho * v, v
 
-    # The mass-flux peak lies near 0.49 p0 for helium; searching no lower than
+    # The mass-flux peak lies near 0.49 p0 for helium and 0.53 p0 for nitrogen and air; searching no lower than
     # _MIN_THROAT_RATIO keeps a choked expansion clear of the property range limit.
     lo, hi = max(back_pressure_pa, _MIN_THROAT_RATIO * supply_pressure_pa), supply_pressure_pa
     throat_floor = lo

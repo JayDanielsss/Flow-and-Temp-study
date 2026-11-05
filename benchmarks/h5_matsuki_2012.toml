@@ -1,0 +1,27 @@
+# Benchmark Case H5. Abstracts only. Sample temperature is given as a 30-90 K range and
+# liquid-helium use (about 6 L/h) is not a heat load in watts, so nothing is measured here yet.
+id = "H5"
+name = "Matsuki et al. 2012: helium-cooled, helium-spun Rotor"
+
+[sources]
+matsuki2012 = "Y. Matsuki, K. Ueda, T. Idehara, R. Ikeda, I. Ogawa, S. Nakamura, M. Toda, T. Anai, T. Fujiwara, \"Helium-cooling and -spinning [...] for sensitivity-enhanced [...] at 14 T and 30 K,\" J. [...] Reson. 225, 1-9 (2012). https://doi.org/10.1016/j.jmr.2012.09.008"
+
+[inputs]
+drive_gas = { value = "helium", source = "matsuki2012", location = "Abstract", flag = "A" }
+rotor_material = { note = "not in abstract" }
+rotor_length_mm = { note = "not in abstract" }
+rotor_diameter_mm = { note = "3.2 mm only second-hand (Li et al. 2021 §1)" }
+wall_thickness_mm = { note = "not in abstract" }
+bearing = { note = "not in abstract" }
+drive_gas_temperature_k = { note = "not in abstract" }
+environment_temperature_k = { note = "not in abstract" }
+environment_pressure_bar = { note = "not in abstract" }
+turbine = { note = "not in abstract" }
+nozzle_count = { note = "not in abstract" }
+nozzle_throat_mm = { note = "not in abstract" }
+nozzle_angle_deg = { note = "not in abstract" }
+back_pressure_bar = { note = "not in abstract" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 3000.0, source = "matsuki2012", location = "Abstract (about 3 kHz)", flag = "A" }
+measured.sample_temperature_k = { note = "30-90 K range only" }

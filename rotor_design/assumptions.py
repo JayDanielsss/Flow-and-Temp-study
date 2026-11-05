@@ -24,6 +24,8 @@ class Assumptions:
     bottom_cap_thickness_mm: float
     environment_temperature_k: float
     environment_pressure_torr: float
+    environment_gas: str
+    drive_gas: str
     drive_gas_temperature_k: float
     max_supply_pressure_bar: float
     target_spin_rate_hz: float
@@ -61,6 +63,7 @@ class Assumptions:
     study_grid: dict                # Design field -> values tried in the full study
     study_top_designs: int
     constraint_map_axes: tuple      # (x, y) Design fields
+    benchmark_tolerance: dict       # measured quantity -> allowed |Model-Form Error|
 
 
 def load_assumptions(path):
@@ -72,6 +75,7 @@ def load_assumptions(path):
     rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
     bearing, turbine, exhaust = raw["bearing"], raw["turbine"], raw["exhaust"]
     stress, rotordynamics, study = raw["stress"], raw["rotordynamics"], raw["study"]
+    benchmark = raw["benchmark"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -92,6 +96,8 @@ def load_assumptions(path):
         bottom_cap_thickness_mm=rotor["bottom_cap_thickness_mm"],
         environment_temperature_k=environment["temperature_k"],
         environment_pressure_torr=environment["pressure_torr"],
+        environment_gas=environment["gas"],
+        drive_gas=drive["gas"],
         drive_gas_temperature_k=drive["drive_gas_temperature_k"],
         max_supply_pressure_bar=drive["max_supply_pressure_bar"],
         target_spin_rate_hz=drive["target_spin_rate_hz"],
@@ -136,4 +142,5 @@ def load_assumptions(path):
         study_grid={field: tuple(values) for field, values in study["grid"].items()},
         study_top_designs=study["top_designs"],
         constraint_map_axes=(study["constraint_map_x"], study["constraint_map_y"]),
+        benchmark_tolerance=dict(benchmark["tolerance"]),
     )

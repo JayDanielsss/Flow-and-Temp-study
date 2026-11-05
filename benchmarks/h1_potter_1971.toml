@@ -1,0 +1,27 @@
+# Benchmark Case H1. Abstract only: the full text, which likely holds geometry and flow, was not accessed.
+# Format: every input is listed; an empty entry means the source does not report it.
+id = "H1"
+name = "Potter 1971: helium gas Turbine on hydrostatic helium Bearings, sample below 2 K"
+
+[sources]
+potter1971 = "W. H. Potter, \"Apparatus to Rotate Samples Rapidly at Temperatures Less than 2 K in High Transverse Magnetic Fields,\" Rev. Sci. Instrum. 42(5), 618-625 (1971). https://doi.org/10.1063/1.1685187"
+
+[inputs]
+drive_gas = { value = "helium", source = "potter1971", location = "Abstract", flag = "A" }
+rotor_material = { note = "not reported in abstract" }
+rotor_length_mm = { note = "not reported in abstract" }
+rotor_diameter_mm = { note = "not reported in abstract" }
+wall_thickness_mm = { note = "not reported in abstract" }
+bearing = { value = "gas", source = "potter1971", location = "Abstract (hydrostatic helium gas Bearings)", flag = "A" }
+drive_gas_temperature_k = { value = 15.0, source = "potter1971", location = "Abstract (counterflow heat exchanger outlet)", flag = "A" }
+environment_temperature_k = { note = "abstract gives only an upper bound, below 2 K" }
+environment_pressure_bar = { note = "not reported in abstract" }
+turbine = { note = "helium gas Turbine; type not reported in abstract" }
+nozzle_count = { note = "not reported in abstract" }
+nozzle_throat_mm = { note = "not reported in abstract" }
+nozzle_angle_deg = { note = "not reported in abstract" }
+back_pressure_bar = { note = "not reported in abstract" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 103.0, source = "potter1971", location = "Abstract (\"up to\")", flag = "A" }
+# Supply Pressure, flow and heat load: not reported in abstract.

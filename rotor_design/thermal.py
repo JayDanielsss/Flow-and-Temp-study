@@ -107,7 +107,8 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
 
     Layout from z = 0: solid Bottom Cap, then the Sample inside the tube, then empty bore
     up to the Turbine Cap at z = body_length_m. Vapour Cooling and radiation exchange
-    with the Stator across the gap; Stator radiation is absorbed as a source.
+    with the Stator across the gap; the radiation is the net exchange
+    eps sigma (T^4 - T_stator^4), so it heats the Rotor only where the Stator is warmer.
     The Sample's centre runs hotter than its wall by Q / (4 pi k L) under internal load.
     With cold_support_gap_m set, the Bottom Cap face conducts across that gap to a Cold
     Support at Bath temperature and receives cold_support_shear_heat_w from the gap shear.
@@ -123,7 +124,6 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     annulus = np.pi * (r_o**2 - r_i**2)
     sample_top = bottom_cap_m + sample_length_m
     sample_area = np.pi * r_i**2
-    radiation_in_per_area = emissivity * STEFAN_BOLTZMANN * stator_temperature_k**4
 
     def in_sample(z):
         return bottom_cap_m <= z <= sample_top
@@ -152,15 +152,17 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     vented_source = 0.0 if vented_gas_temperature_k is None else (
         vented_hp * (vented_gas_temperature_k - stator_temperature_k))
 
+    def radiation(t):
+        """h_rad with h_rad (T - T_stator) = eps sigma (T^4 - T_stator^4) exactly."""
+        return emissivity * STEFAN_BOLTZMANN * (t**2 + stator_temperature_k**2) * (t + stator_temperature_k)
+
     def cooling(z, t):
         t_film = (t + stator_temperature_k) / 2.0
         h_gas = gap_heat_transfer_coefficient(t_film, vapour_pressure_pa, gap_m, accommodation)
-        # Emission linearised about the local temperature.
-        h_rad = emissivity * STEFAN_BOLTZMANN * (t**2 + stator_temperature_k**2) * (t + stator_temperature_k)
-        return (h_gas + h_rad) * perimeter + vented_hp
+        return (h_gas + radiation(t)) * perimeter + vented_hp
 
     def sources(z):
-        return (windage_heat_per_length_w_m + radiation_in_per_area * perimeter + vented_source
+        return (windage_heat_per_length_w_m + vented_source
                 + (internal_per_length if in_sample(z) else 0.0))
 
     if cold_support_gap_m is None:
@@ -216,13 +218,15 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
             delivered, conducted_in = dict.fromkeys(point_heat_w, 0.0), shed
     sample_mask = np.array([in_sample(zi) for zi in z])
     vented_in = float(np.sum(vented_hp * (vented_gas_temperature_k - t) * zone_cell)) if vented_hp else 0.0
+    # Net radiation from the Stator into the zone, only where the Stator is the warmer surface.
+    radiation_in = float(np.sum(np.maximum(radiation(t) * (stator_temperature_k - t), 0.0) * perimeter * zone_cell))
     breakdown = {
         "turbine_cap_conduction": conducted_in,
         "windage": float(windage_heat_per_length_w_m * np.sum(zone_cell)),
         "bearing_friction": float(delivered["bearing_friction"]),
         # Bearing gas warmer than the Rotor, and Vented Drive Gas.
         "convection": float(delivered["convection"]) + vented_in,
-        "radiation": float(radiation_in_per_area * perimeter * np.sum(zone_cell)),
+        "radiation": radiation_in,
         "internal_load": float(internal_per_length * np.sum(zone_cell * sample_mask)),
         "cold_support_shear": float(delivered["cold_support_shear"]),
     }

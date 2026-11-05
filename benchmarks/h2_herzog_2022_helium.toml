@@ -1,0 +1,39 @@
+# Benchmark Case H2. Fig. 18 helium points were measured on 3.2 mm hardware but scaled by the
+# authors to the 1.3 mm geometry, and the Spin Rate at each point is not given.
+id = "H2"
+name = "Herzog et al. 2022: 3.2 mm helium-driven Pelton Turbine at 45 K"
+
+[sources]
+herzog2022 = "N. Herzog, A. Weber, A. Purea, D. Osen, B. Knott, F. Engelke, D. Wilhelm, \"Ultra Low Temperature Microturbine for [...] System,\" J. Fluids Eng. 144(8), 081205 (2022). https://doi.org/10.1115/1.4053746 (open access: https://digitalcollection.zhaw.ch/handle/11475/24642)"
+
+[inputs]
+drive_gas = { value = "helium", source = "herzog2022", location = "§2.4; Fig. 18", flag = "M" }
+rotor_material = { note = "not reported" }
+rotor_length_mm = { note = "not reported" }
+rotor_diameter_mm = { value = 3.2, source = "herzog2022", location = "§3.4; Fig. 18 caption", flag = "M" }
+wall_thickness_mm = { note = "not reported" }
+bearing = { value = "gas", source = "herzog2022", location = "§2 (two radial gas Bearings, 5 Nozzles each)", flag = "M" }
+drive_gas_temperature_k = { value = 45.0, source = "herzog2022", location = "§2.4; Fig. 18 caption", flag = "M" }
+environment_temperature_k = { note = "not reported; sample at 25-55 K (§3.4)" }
+environment_pressure_bar = { note = "not reported" }
+turbine = { value = "pelton", source = "herzog2022", location = "Abstract; §2", flag = "M" }
+nozzle_count = { note = "not reported for the 3.2 mm hardware" }
+nozzle_throat_mm = { note = "not reported" }
+nozzle_angle_deg = { note = "not reported" }
+back_pressure_bar = { value = 1.0, source = "herzog2022", location = "§3.1 (ambient outlet)", flag = "U" }
+
+# Fig. 18 end points (red circles): Spin Rate not reported; pressure basis not stated.
+[[points]]
+inputs.spin_rate_hz = { note = "not reported for Fig. 18 points" }
+measured.supply_pressure_bar = { value = 1.15, source = "herzog2022", location = "Fig. 18", flag = "F, U" }
+measured.mass_flow_kg_s = { value = 0.7e-4, source = "herzog2022", location = "Fig. 18", flag = "F, U" }
+
+[[points]]
+inputs.spin_rate_hz = { note = "not reported for Fig. 18 points" }
+measured.supply_pressure_bar = { value = 2.45, source = "herzog2022", location = "Fig. 18", flag = "F, U" }
+measured.mass_flow_kg_s = { value = 2.2e-4, source = "herzog2022", location = "Fig. 18", flag = "F, U" }
+
+# Table 5 reference point; the text does not say whether the 3.2 mm row is measured.
+[[points]]
+inputs.spin_rate_hz = { value = 8000.0, source = "herzog2022", location = "Table 5", flag = "U" }
+measured.mass_flow_kg_s = { value = 2.6e-4, source = "herzog2022", location = "Table 5", flag = "U" }

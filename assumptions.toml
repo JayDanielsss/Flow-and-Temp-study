@@ -50,10 +50,12 @@ cold_support_plate_mm = 2.0
 probe_wall_clearance_mm = 0.5
 
 [environment]
+gas = "helium"                 # "helium", "nitrogen" or "air": the gas the Rotor turns in
 temperature_k = 1.2            # Bath vapour around the Rotor
 pressure_torr = 0.2            # saturated vapour pressure of the Bath
 
 [drive]
+gas = "helium"                 # Drive Gas, also fed to the gas Bearings
 drive_gas_temperature_k = 10.0
 max_supply_pressure_bar = 3.77 # absolute; 40 psig at the room-temperature regulator
 target_spin_rate_hz = 1000.0
@@ -135,3 +137,15 @@ whirl_onset_ratio = 2.0          # placeholder rule of thumb: gas-bearing whirl 
 
 [materials]
 zirconia_conductivity_multiplier = 1.0  # Input Uncertainty range x0.3 to x3
+
+[benchmark]
+# Allowed |Model-Form Error|, (predicted - measured) / measured, for each measured quantity.
+[benchmark.tolerance]
+supply_pressure_bar = 0.3        # placeholder, no basis yet
+supply_pressure_bar_gauge = 0.3  # placeholder
+mass_flow_kg_s = 0.3             # placeholder
+torque_n_m = 0.5                 # placeholder
+drag_power_w = 0.5               # placeholder
+sample_temperature_k = 0.2       # placeholder
+sample_heat_load_w = 0.5         # placeholder
+bath_heat_load_w = 0.5           # placeholder

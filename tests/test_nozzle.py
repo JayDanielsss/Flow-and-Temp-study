@@ -6,6 +6,7 @@ ideal-gas isentropic nozzle formulas, gamma = 5/3, Cd = 0.8, 0.5 mm throat.
 
 import pytest
 
+from rotor_design.gas import AIR, NITROGEN
 from rotor_design.nozzle import nozzle_flow
 
 THROAT_M = 0.5e-3
@@ -29,3 +30,24 @@ def test_unchoked_flow_matches_ideal_gas_limit():
     assert not flow.choked
     assert flow.mass_flow_kg_s == pytest.approx(1.13725e-5, rel=5e-3)
     assert flow.jet_velocity_m_s == pytest.approx(515.8, rel=5e-3)
+
+
+@pytest.mark.parametrize("gas, mass_flow, velocity", [
+    # Same formulas, gamma = 1.4, 300 K, 1 bar, Cd = 0.8, 0.5 mm throat:
+    #   nitrogen (R = 296.80): m = 3.6045e-5 kg/s, v = 322.31 m/s
+    #   air (R = 287.05):      m = 3.6652e-5 kg/s, v = 316.96 m/s
+    (NITROGEN, 3.6045e-5, 322.31),
+    (AIR, 3.6652e-5, 316.96),
+])
+def test_diatomic_choked_flow_matches_ideal_gas_limit(gas, mass_flow, velocity):
+    flow = nozzle_flow(1e5, 300.0, 1e4, THROAT_M, CD, gas)
+    assert flow.choked
+    assert flow.mass_flow_kg_s == pytest.approx(mass_flow, rel=5e-3)
+    assert flow.jet_velocity_m_s == pytest.approx(velocity, rel=5e-3)
+    # Critical pressure ratio (2 / (gamma + 1))^(gamma / (gamma - 1)) = 0.5283
+    assert flow.throat_pressure_pa / 1e5 == pytest.approx(0.5283, rel=5e-3)
+
+
+def test_diatomic_nozzle_chokes_only_below_its_critical_ratio():
+    assert not nozzle_flow(1e5, 300.0, 0.55e5, THROAT_M, CD, NITROGEN).choked
+    assert nozzle_flow(1e5, 300.0, 0.50e5, THROAT_M, CD, NITROGEN).choked
