@@ -43,6 +43,12 @@ turbine_efficiency = 1.0       # placeholder: ideal Euler torque, losses not yet
 rotor_stator_gap_mm = 0.1      # placeholder radial gap between Rotor and Stator
 accommodation_coefficient = 1.0 # placeholder: fully diffuse reflection
 
+[cold_support]
+# Cooling path: "vapour" (Vapour Cooling alone) or "vapour_and_cold_support"
+cooling_path = "vapour"
+gap_mm = 0.05                  # placeholder gap from the Bottom Cap face to the Cold Support plate
+gap_sweep_mm = [0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
+
 [design_baseline]
 # Used wherever a Design leaves a value unset
 nozzle_count = 4

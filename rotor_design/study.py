@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from rotor_design.assumptions import load_assumptions
-from rotor_design.evaluate import Design, evaluate
+from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, evaluate
 
 SERIES = "#2a78d6"
 INK = "#0b0b0b"
@@ -25,11 +25,12 @@ RANK_COLOURS = ("#2a78d6", "#eb6834", "#1baf7a")
 TOP_DESIGNS = len(RANK_COLOURS)
 
 
-def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=None):
-    """Evaluate each Rotor Length and Nozzle variant; return the Rotor Length Results.
+def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=None, cold_support_gaps_mm=None):
+    """Evaluate each Rotor Length, Nozzle variant and Cold Support gap; return the Rotor Length Results.
 
     nozzle_sweeps maps a Design field (nozzle_count, nozzle_throat_mm,
     nozzle_angle_deg) to the values tried, one field at a time about the baseline.
+    Cold Support gaps are tried at the longest Rotor and compared with Vapour Cooling alone.
     """
     a = load_assumptions(assumptions_path)
     if rotor_lengths_mm is None:
@@ -64,6 +65,14 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     ]
     _write_rows(nozzle_rows, plots_dir / "nozzle_geometry_sweep.csv")
     _plot_nozzle_sweep(nozzle_rows, a, plots_dir / "required_flow_vs_nozzle_geometry.png")
+
+    if cold_support_gaps_mm is None:
+        cold_support_gaps_mm = a.cold_support_gap_sweep_mm
+    vapour = evaluate(Design(rotor_length_mm=a.max_rotor_length_mm, cooling_path=VAPOUR_ONLY), a)
+    cold = [evaluate(Design(rotor_length_mm=a.max_rotor_length_mm, cooling_path=COLD_SUPPORT,
+                            cold_support_gap_mm=float(gap)), a) for gap in cold_support_gaps_mm]
+    _write_csv([vapour, *cold], plots_dir / "cold_support_gap_sweep.csv")
+    _plot_cold_support_gap(vapour, cold, a, plots_dir / "sample_heat_load_vs_cold_support_gap.png")
     return results
 
 
@@ -165,6 +174,43 @@ def _plot_nozzle_sweep(rows, assumptions, path):
     fig.suptitle(
         f"Drive Gas needed at {assumptions.target_spin_rate_hz:g} Hz, "
         f"{assumptions.max_rotor_length_mm:g} mm Rotor (dashed: baseline)",
+        color=INK, fontsize=11, x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def _plot_cold_support_gap(vapour, cold, assumptions, path):
+    gaps = [r.cold_support_gap_mm for r in cold]
+    bath = assumptions.environment_temperature_k
+    panels = (
+        ("Sample Heat Load (mW)", lambda r: r.sample_heat_load_w * 1e3),
+        ("Sample hottest-point rise above Bath (mK)", lambda r: (r.sample_hottest_temperature_k - bath) * 1e3),
+    )
+    fig, axes = plt.subplots(1, len(panels), figsize=(10, 4.2), facecolor=SURFACE)
+    for ax, (label, value) in zip(axes, panels):
+        ax.set_facecolor(SURFACE)
+        ax.plot(gaps, [value(r) for r in cold], color=SERIES, linewidth=2, marker="o", markersize=5,
+                markeredgecolor=SURFACE, markeredgewidth=1.5)
+        ax.axhline(value(vapour), color=INK_SECONDARY, linewidth=1, linestyle=":")
+        ax.annotate("Vapour Cooling alone", (1.0, value(vapour)), xycoords=("axes fraction", "data"),
+                    xytext=(0, 4), textcoords="offset points", ha="right", va="bottom",
+                    color=INK_SECONDARY, fontsize=8)
+        ax.set_xscale("log")
+        ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:.4g}"))
+        ax.set_xlabel("Cold Support gap (mm)", color=INK_SECONDARY, fontsize=9)
+        ax.set_ylabel(label, color=INK_SECONDARY, fontsize=9)
+        ax.grid(color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(GRID)
+        ax.tick_params(colors=INK_SECONDARY, labelsize=8)
+    fig.suptitle(
+        f"Vapour Cooling plus Cold Support, {assumptions.max_rotor_length_mm:g} mm Rotor "
+        f"at {assumptions.target_spin_rate_hz:g} Hz (dotted: Vapour Cooling alone)",
         color=INK, fontsize=11, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(path, dpi=150, facecolor=SURFACE)
