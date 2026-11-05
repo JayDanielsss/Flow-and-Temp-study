@@ -4,6 +4,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from rotor_design.bearing import GAS, MECHANICAL, TWO_CENTER_PIVOT, GasBearing, MechanicalBearing, TwoCenterPivots
 from rotor_design.geometry import StatorAllowance
 
 
@@ -32,6 +33,9 @@ class Assumptions:
     cooling_path: str
     cold_support_gap_mm: float
     cold_support_gap_sweep_mm: tuple
+    bearing: str
+    pivot_to_bath: bool
+    bearings: dict                  # Bearing type -> its model
     baseline_nozzle_count: int
     baseline_nozzle_throat_mm: float
     baseline_nozzle_angle_deg: float
@@ -55,6 +59,7 @@ def load_assumptions(path):
     environment, drive, thermal = raw["environment"], raw["drive"], raw["thermal"]
     drag, baseline = raw["drag"], raw["design_baseline"]
     rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
+    bearing = raw["bearing"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -85,6 +90,13 @@ def load_assumptions(path):
         cooling_path=cold_support["cooling_path"],
         cold_support_gap_mm=cold_support["gap_mm"],
         cold_support_gap_sweep_mm=tuple(cold_support["gap_sweep_mm"]),
+        bearing=bearing["type"],
+        pivot_to_bath=bearing["pivot_to_bath"],
+        bearings={
+            GAS: GasBearing(**bearing["gas"]),
+            MECHANICAL: MechanicalBearing(**bearing["mechanical"]),
+            TWO_CENTER_PIVOT: TwoCenterPivots(**bearing["pivot"]),
+        },
         baseline_nozzle_count=baseline["nozzle_count"],
         baseline_nozzle_throat_mm=baseline["nozzle_throat_mm"],
         baseline_nozzle_angle_deg=baseline["nozzle_angle_deg"],

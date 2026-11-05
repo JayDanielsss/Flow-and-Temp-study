@@ -1,8 +1,9 @@
 """Evaluate one Design: Design plus assumptions in, Results out."""
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from rotor_design.bearing import BEARING_TYPES, TWO_CENTER_PIVOT, pivot_contact_conductance
 from rotor_design.drag import cold_support_shear_torque, windage_torque
 from rotor_design.gas import gap_heat_transfer_coefficient
 from rotor_design.geometry import max_rotor_diameter, projected_width
@@ -24,6 +25,23 @@ _MARGIN_TOLERANCE = 1e-9
 VAPOUR_ONLY = "vapour"
 COLD_SUPPORT = "vapour_and_cold_support"
 COOLING_PATHS = (VAPOUR_ONLY, COLD_SUPPORT)
+STANDARD_GRAVITY = 9.80665
+
+
+def is_excluded(bearing, pivot_to_bath):
+    """Over-constrained Configurations: a contact tie to the Bath on anything but two-center pivots."""
+    return pivot_to_bath and bearing != TWO_CENTER_PIVOT
+
+
+def configurations():
+    """Every allowed combination of Bearing type, pivot-to-Bath option and cooling path, as Design fields."""
+    return [
+        {"bearing": bearing, "pivot_to_bath": tied, "cooling_path": path}
+        for bearing in BEARING_TYPES
+        for tied in (False, True)
+        for path in COOLING_PATHS
+        if not is_excluded(bearing, tied)
+    ]
 
 
 @dataclass(frozen=True)
@@ -42,6 +60,8 @@ class Design:
     sample_internal_heat_load_w: float | None = None
     cooling_path: str | None = None
     cold_support_gap_mm: float | None = None
+    bearing: str | None = None
+    pivot_to_bath: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -65,7 +85,7 @@ class Results:
     nozzle_choked: bool
     jet_velocity_m_s: float
     turbine_torque_n_m: float
-    drag_torque_n_m: float          # windage plus Cold Support gap shear
+    drag_torque_n_m: float          # windage, Cold Support gap shear and Bearing friction
     windage_regime: str
     knudsen_number: float
     wall_thickness_mm: float
@@ -76,6 +96,13 @@ class Results:
     cold_support_gap_mm: float      # nan without a Cold Support
     cold_support_drag_torque_n_m: float
     cold_support_heat_to_bath_w: float
+    bearing: str
+    pivot_to_bath: bool
+    bearing_friction_torque_n_m: float
+    bearing_stiffness_n_m: float
+    bearing_radial_space_mm: float
+    pivot_heat_to_bath_w: float
+    warning: str
     z_mm: tuple
     temperature_k: tuple
     sample_zone_mm: float
@@ -99,7 +126,14 @@ def evaluate(design, assumptions):
     body_length_mm = design.rotor_length_mm - a.turbine_cap_height_mm
     if body_length_mm <= a.bottom_cap_thickness_mm:
         raise ValueError(f"Rotor Length {design.rotor_length_mm} mm leaves no room below the Turbine Cap")
-    allowance = a.stator_allowance
+    bearing = _or(design.bearing, a.bearing)
+    pivot_to_bath = _or(design.pivot_to_bath, a.pivot_to_bath)
+    if bearing not in BEARING_TYPES:
+        raise ValueError(f"Unknown Bearing type {bearing!r}; expected one of {BEARING_TYPES}")
+    if is_excluded(bearing, pivot_to_bath):
+        raise ValueError(f"Excluded Configuration: pivot-to-Bath needs two-center pivots, not {bearing!r}")
+    bearing_model = a.bearings[bearing]
+    allowance = replace(a.stator_allowance, bearing_radial_space=bearing_model.radial_space_mm)
     largest = max_rotor_diameter(design.rotor_length_mm, allowance, a.bore_diameter_mm, a.tilt_angle_deg)
     diameter = _or(design.rotor_diameter_mm, largest)
 
@@ -129,7 +163,17 @@ def evaluate(design, assumptions):
                                                 back_p, a.accommodation_coefficient).torque_n_m
     else:
         cold_gap_mm, cold_torque = math.nan, 0.0
-    drag_torque = windage.torque_n_m + cold_torque
+    wall_mm = _or(design.wall_thickness_mm, a.baseline_wall_thickness_mm)
+    bearing_load = bearing_model.performance(
+        rotor_radius_m=radius_m,
+        rotor_weight_n=_rotor_weight_n(radius_m, wall_mm / 1e3, body_length_mm / 1e3,
+                                       a.bottom_cap_thickness_mm / 1e3, a.turbine_cap_height_mm / 1e3),
+        spin_rate_hz=spin,
+        bath_temperature_k=a.environment_temperature_k,
+        ambient_pressure_pa=back_p,
+        accommodation=a.accommodation_coefficient,
+    )
+    drag_torque = windage.torque_n_m + cold_torque + bearing_load.friction_torque_n_m
 
     def drive(supply_p):
         flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient)
@@ -147,7 +191,6 @@ def evaluate(design, assumptions):
     supply_bar = supply_p / PA_PER_BAR
     reaches_spin = supply_bar <= a.max_supply_pressure_bar
 
-    wall_mm = _or(design.wall_thickness_mm, a.baseline_wall_thickness_mm)
     sample_mm = _or(design.sample_length_mm, a.baseline_sample_length_mm)
     sample_k = _or(design.sample_conductivity_w_m_k, a.sample_conductivity_w_m_k)
     sample_q = _or(design.sample_internal_heat_load_w, a.sample_internal_heat_load_w)
@@ -175,6 +218,12 @@ def evaluate(design, assumptions):
         gap_heat_transfer_coefficient=gap_heat_transfer_coefficient,
         cold_support_gap_m=None if cooling_path == VAPOUR_ONLY else cold_gap_mm / 1e3,
         cold_support_shear_heat_w=cold_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction,
+        bearing_friction_heat_w=bearing_load.bottom_friction_heat_w,
+        bearing_gas_heat_w=bearing_load.bottom_gas_heat_w,
+        pivot_conductance=(lambda t: pivot_contact_conductance(bearing_load.contact_radius_m, t,
+                                                               a.environment_temperature_k,
+                                                               a.zirconia_conductivity_multiplier))
+        if pivot_to_bath else None,
     )
     sample_zone_mm = thermal.sample_zone_m * 1e3
     sample_limit_k = a.environment_temperature_k + a.sample_zone_delta_t_k
@@ -222,6 +271,13 @@ def evaluate(design, assumptions):
         cold_support_gap_mm=cold_gap_mm,
         cold_support_drag_torque_n_m=cold_torque,
         cold_support_heat_to_bath_w=thermal.cold_support_heat_out_w,
+        bearing=bearing,
+        pivot_to_bath=pivot_to_bath,
+        bearing_friction_torque_n_m=bearing_load.friction_torque_n_m,
+        bearing_stiffness_n_m=bearing_load.stiffness_n_m,
+        bearing_radial_space_mm=bearing_load.radial_space_mm,
+        pivot_heat_to_bath_w=thermal.pivot_heat_out_w,
+        warning=bearing_load.warning,
         z_mm=tuple(thermal.z_m * 1e3),
         temperature_k=tuple(thermal.temperature_k),
         sample_zone_mm=sample_zone_mm,
@@ -232,6 +288,14 @@ def evaluate(design, assumptions):
                   and thermal.sample_hottest_temperature_k <= sample_limit_k),
         binding_constraint=binding,
     )
+
+
+def _rotor_weight_n(radius_m, wall_m, body_length_m, bottom_cap_m, turbine_cap_m):
+    """Weight of the zirconia Rotor: tube, solid Bottom Cap and solid Turbine Cap; the Sample is not included."""
+    r_i = max(radius_m - wall_m, 0.0)
+    tube = math.pi * (radius_m**2 - r_i**2) * (body_length_m - bottom_cap_m)
+    caps = math.pi * radius_m**2 * (bottom_cap_m + turbine_cap_m)
+    return ZIRCONIA.density_kg_m3 * (tube + caps) * STANDARD_GRAVITY
 
 
 def _required_supply_pressure(drive, drag_torque, back_pressure, ceiling):

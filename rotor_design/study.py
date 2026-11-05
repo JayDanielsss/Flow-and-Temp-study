@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from rotor_design.assumptions import load_assumptions
-from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, evaluate
+from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, configurations, evaluate
 
 SERIES = "#2a78d6"
 INK = "#0b0b0b"
@@ -31,6 +31,8 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     nozzle_sweeps maps a Design field (nozzle_count, nozzle_throat_mm,
     nozzle_angle_deg) to the values tried, one field at a time about the baseline.
     Cold Support gaps are tried at the longest Rotor and compared with Vapour Cooling alone.
+    Every allowed Configuration (Bearing type, pivot-to-Bath option, cooling path) is
+    evaluated at the longest Rotor; excluded combinations are never evaluated.
     """
     a = load_assumptions(assumptions_path)
     if rotor_lengths_mm is None:
@@ -73,6 +75,9 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
                             cold_support_gap_mm=float(gap)), a) for gap in cold_support_gaps_mm]
     _write_csv([vapour, *cold], plots_dir / "cold_support_gap_sweep.csv")
     _plot_cold_support_gap(vapour, cold, a, plots_dir / "sample_heat_load_vs_cold_support_gap.png")
+
+    _write_csv([evaluate(Design(rotor_length_mm=a.max_rotor_length_mm, **c), a) for c in configurations()],
+               plots_dir / "bearing_configurations.csv")
     return results
 
 

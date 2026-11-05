@@ -92,6 +92,7 @@ class RotorThermal:
     sample_heat_load_w: float
     breakdown_w: dict
     cold_support_heat_out_w: float   # heat crossing the Cold Support gap to the Bath
+    pivot_heat_out_w: float          # heat conducted through the lower pivot contact to the Bath
 
 
 def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample_length_m,
@@ -99,7 +100,8 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
                   turbine_cap_temperature_k, bath_temperature_k, stator_temperature_k,
                   vapour_pressure_pa, gap_m, accommodation, emissivity, windage_heat_per_length_w_m,
                   sample_zone_delta_t_k, gap_heat_transfer_coefficient, cold_support_gap_m=None,
-                  cold_support_shear_heat_w=0.0):
+                  cold_support_shear_heat_w=0.0, bearing_friction_heat_w=0.0, bearing_gas_heat_w=0.0,
+                  pivot_conductance=None):
     """Temperature along the Rotor body below the Turbine Cap, and the Sample Zone heat budget.
 
     Layout from z = 0: solid Bottom Cap, then the Sample inside the tube, then empty bore
@@ -108,6 +110,8 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     The Sample's centre runs hotter than its wall by Q / (4 pi k L) under internal load.
     With cold_support_gap_m set, the Bottom Cap face conducts across that gap to a Cold
     Support at Bath temperature and receives cold_support_shear_heat_w from the gap shear.
+    The lower Bearing sits at the Bottom Cap: its friction heat and warm-gas heat enter there,
+    and pivot_conductance(T) (W/K), when set, conducts from there to the Bath in parallel.
     """
     r_o = outer_radius_m
     r_i = r_o - wall_m
@@ -145,47 +149,94 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
                 + (internal_per_length if in_sample(z) else 0.0))
 
     if cold_support_gap_m is None:
-        cold_support, cold_support_shear_heat_w = None, 0.0
+        cold_support_shear_heat_w = 0.0
+
+        def cold_support(t):
+            return 0.0
     else:
         def cold_support(t):
             t_film = (t + bath_temperature_k) / 2.0
             return (gap_heat_transfer_coefficient(t_film, vapour_pressure_pa, cold_support_gap_m, accommodation)
                     * np.pi * r_o**2)
+    pivot = pivot_conductance or (lambda t: 0.0)
+    tip_heat_w = cold_support_shear_heat_w + bearing_friction_heat_w + bearing_gas_heat_w
+    has_tip_sink = cold_support_gap_m is not None or pivot_conductance is not None
 
     # Cooling is referenced to the Stator; with the Stator at Bath temperature these coincide.
     fin = fin_profile(body_length_m, conductance, cooling, stator_temperature_k, turbine_cap_temperature_k,
-                      sources, n_nodes=_DEFAULT_NODES, tip_conductance=cold_support,
-                      tip_sink_temperature_k=bath_temperature_k, tip_heat_w=cold_support_shear_heat_w)
+                      sources, n_nodes=_DEFAULT_NODES,
+                      tip_conductance=(lambda t: cold_support(t) + pivot(t)) if has_tip_sink else None,
+                      tip_sink_temperature_k=bath_temperature_k, tip_heat_w=tip_heat_w)
     z, t, cell = fin.z_m, fin.temperature_k, fin.cell_length_m
 
     limit = bath_temperature_k + sample_zone_delta_t_k
-    if t[0] > limit:
-        zone = 0.0
-    elif t[-1] <= limit:
-        zone = body_length_m
-    else:
-        i = int(np.argmax(t > limit))
-        zone = float(z[i - 1] + (limit - t[i - 1]) * (z[i] - z[i - 1]) / (t[i] - t[i - 1]))
+    first, last, zone = _longest_cold_stretch(z, t, limit)
 
-    in_zone = z <= zone
+    in_zone = np.zeros(len(z), dtype=bool)
+    if zone > 0.0:
+        in_zone[first:last + 1] = True
     zone_cell = cell * in_zone
     cooling_out = np.array([cooling(zi, ti) for zi, ti in zip(z, t)]) * (t - stator_temperature_k)
     source_in = np.array([sources(zi) for zi in z])
-    # The Bottom Cap face (z = 0) always lies in the Sample Zone.
-    conducted_in = float(np.sum((cooling_out - source_in) * zone_cell)
-                         + fin.tip_heat_out_w - cold_support_shear_heat_w)
+    # Net heat the zone sheds sideways beyond what is generated in it; conduction and the
+    # Bottom Cap end sources make up the difference.
+    shed = float(np.sum((cooling_out - source_in) * zone_cell))
+    point_heat_w = {"bearing_friction": bearing_friction_heat_w, "convection": bearing_gas_heat_w,
+                    "cold_support_shear": cold_support_shear_heat_w}
+    if zone == 0.0:
+        delivered, conducted_in = dict.fromkeys(point_heat_w, 0.0), 0.0
+    elif first == 0:
+        # The zone reaches the Bottom Cap face: its sources enter directly, the tip sink draws out.
+        delivered = point_heat_w
+        conducted_in = shed + fin.tip_heat_out_w - tip_heat_w
+    else:
+        # A warm Bottom Cap end lies below the zone: what crosses the lower edge comes from its sources.
+        below = slice(0, first)
+        from_bottom = (tip_heat_w - fin.tip_heat_out_w
+                       + float(np.sum((source_in - cooling_out)[below] * cell[below])))
+        if tip_heat_w > 0.0:
+            delivered = {k: from_bottom * q / tip_heat_w for k, q in point_heat_w.items()}
+            conducted_in = shed - from_bottom
+        else:
+            delivered, conducted_in = dict.fromkeys(point_heat_w, 0.0), shed
     sample_mask = np.array([in_sample(zi) for zi in z])
     breakdown = {
         "turbine_cap_conduction": conducted_in,
         "windage": float(windage_heat_per_length_w_m * np.sum(zone_cell)),
-        "bearing_friction": 0.0,   # no Bearing model yet
-        "convection": 0.0,         # no gas warmer than the Rotor reaches the Sample Zone yet
+        "bearing_friction": float(delivered["bearing_friction"]),
+        "convection": float(delivered["convection"]),   # bearing gas warmer than the Rotor
         "radiation": float(radiation_in_per_area * perimeter * np.sum(zone_cell)),
         "internal_load": float(internal_per_length * np.sum(zone_cell * sample_mask)),
-        "cold_support_shear": float(cold_support_shear_heat_w),
+        "cold_support_shear": float(delivered["cold_support_shear"]),
     }
 
     radial_rise = (sample_internal_heat_load_w / (4.0 * np.pi * sample_conductivity_w_m_k * sample_length_m)
                    if sample_length_m > 0 else 0.0)
     hottest = float(np.max(t[sample_mask])) + radial_rise if sample_mask.any() else float("nan")
-    return RotorThermal(z, t, zone, hottest, float(sum(breakdown.values())), breakdown, fin.tip_heat_out_w)
+    tip_rise = t[0] - bath_temperature_k
+    return RotorThermal(z, t, zone, hottest, float(sum(breakdown.values())), breakdown,
+                        float(cold_support(t[0]) * tip_rise), float(pivot(t[0]) * tip_rise))
+
+
+def _longest_cold_stretch(z, t, limit):
+    """First and last node of the longest contiguous run with t <= limit, and its interpolated length."""
+    best = (0, 0, 0.0)
+    n = len(z)
+    i = 0
+    while i < n:
+        if t[i] > limit:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and t[j + 1] <= limit:
+            j += 1
+        lo = z[0] if i == 0 else _crossing(z[i - 1], z[i], t[i - 1], t[i], limit)
+        hi = z[-1] if j == n - 1 else _crossing(z[j], z[j + 1], t[j], t[j + 1], limit)
+        if hi - lo > best[2]:
+            best = (i, j, float(hi - lo))
+        i = j + 1
+    return best
+
+
+def _crossing(z0, z1, t0, t1, limit):
+    return z0 + (limit - t0) * (z1 - z0) / (t1 - t0)

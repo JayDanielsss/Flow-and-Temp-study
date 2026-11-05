@@ -49,6 +49,31 @@ cooling_path = "vapour"
 gap_mm = 0.05                  # placeholder gap from the Bottom Cap face to the Cold Support plate
 gap_sweep_mm = [0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
 
+[bearing]
+# Bearing type: "gas", "mechanical" or "two_center_pivot"
+type = "two_center_pivot"
+pivot_to_bath = false          # lower pivot tied to the Bath by contact; two-center pivots only
+
+[bearing.gas]
+journal_length_mm = 3.0        # placeholder, per journal; two journals
+clearance_mm = 0.01            # placeholder radial film clearance
+gas_temperature_k = 10.0       # placeholder: fed from the Drive Gas supply
+supply_pressure_bar = 2.0      # placeholder, absolute
+mass_flow_kg_s = 1e-7          # placeholder, both journals together
+stiffness_coefficient = 0.5    # placeholder: K = coefficient (p_s - p_a) L D / clearance
+radial_space_mm = 1.0          # placeholder feed plenum and journal sleeve, each side
+
+[bearing.mechanical]
+friction_coefficient = 0.01    # placeholder, unlubricated; no source yet
+preload_n = 1.0                # placeholder, per bearing
+stiffness_n_m = 1e7            # placeholder radial stiffness, per bearing
+radial_space_mm = 2.0          # placeholder race cross-section, each side
+
+[bearing.pivot]
+friction_coefficient = 0.1     # placeholder, dry zirconia on zirconia; no source yet
+preload_n = 0.05               # placeholder axial preload, per pivot
+tip_radius_mm = 0.5            # placeholder spherical tip radius
+
 [design_baseline]
 # Used wherever a Design leaves a value unset
 nozzle_count = 4
