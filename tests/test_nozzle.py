@@ -7,7 +7,7 @@ ideal-gas isentropic nozzle formulas, gamma = 5/3, Cd = 0.8, 0.5 mm throat.
 import pytest
 
 from rotor_design.gas import AIR, NITROGEN
-from rotor_design.nozzle import nozzle_flow
+from rotor_design.nozzle import ThroatSearchRangeError, nozzle_flow
 
 THROAT_M = 0.5e-3
 CD = 0.8
@@ -51,3 +51,10 @@ def test_diatomic_choked_flow_matches_ideal_gas_limit(gas, mass_flow, velocity):
 def test_diatomic_nozzle_chokes_only_below_its_critical_ratio():
     assert not nozzle_flow(1e5, 300.0, 0.55e5, THROAT_M, CD, NITROGEN).choked
     assert nozzle_flow(1e5, 300.0, 0.50e5, THROAT_M, CD, NITROGEN).choked
+
+
+def test_throat_below_search_range_raises_its_own_error():
+    # Helium at 6 K and 10 bar is liquid-like: its isentrope peaks below the throat search range.
+    with pytest.raises(ThroatSearchRangeError, match="below the throat search range"):
+        nozzle_flow(10e5, 6.0, 26.66, THROAT_M, CD)
+    assert issubclass(ThroatSearchRangeError, ValueError)

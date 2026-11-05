@@ -498,3 +498,52 @@ def test_warm_nitrogen_drive_needs_more_flow_than_helium_at_the_same_conditions(
     assert nitrogen.drive_gas == "nitrogen" and nitrogen.environment_gas == "nitrogen"
     assert nitrogen.drag_torque_n_m == helium.drag_torque_n_m  # same environment gas
     assert nitrogen.required_mass_flow_kg_s > helium.required_mass_flow_kg_s
+
+
+@pytest.mark.parametrize("drive_gas_k", [5.0, 6.0, 7.0, 8.0])
+def test_cold_drive_gas_evaluates_without_raising(assumptions, drive_gas_k):
+    results = evaluate(Design(rotor_length_mm=20.0, drive_gas_temperature_k=drive_gas_k), assumptions)
+    assert results.back_pressure_bar < results.required_supply_pressure_bar <= 3.77
+    assert results.turbine_torque_n_m == pytest.approx(results.drag_torque_n_m, rel=1e-3)
+
+
+def test_cold_drive_gas_out_of_supply_pressure_reach_is_infeasible_not_raised(assumptions):
+    design = Design(rotor_length_mm=20.0, nozzle_count=1, nozzle_throat_mm=0.002, drive_gas_temperature_k=6.0)
+    results = evaluate(design, assumptions)
+    assert math.isinf(results.required_supply_pressure_bar)
+    assert not results.feasible
+    assert results.binding_constraint == "Supply Pressure"
+
+
+def test_required_supply_pressure_beyond_the_limit_is_reported_infinite(assumptions):
+    design = Design(rotor_length_mm=20.0, nozzle_count=1, nozzle_throat_mm=0.002)
+    results = evaluate(design, assumptions)
+    assert math.isinf(results.required_supply_pressure_bar)
+    assert math.isinf(results.required_mass_flow_kg_s)
+
+
+# 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit:
+# (Rotor Length, Bearing, Exhaust Path, required Supply Pressure bar, mass flow kg/s, Bath Heat Load W,
+#  feasible, Binding Constraint).
+PINNED_10_K = [
+    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05284175483992871, 2.6548135370310343e-06, 0.012988772449783654,
+     True, "Sample Temperature"),
+    (12.0, MECHANICAL, VENTED, 1.9860705185706433, 0.00023439169476472776, 9.945341085226609,
+     False, "Sample Zone"),
+    (12.0, GAS, DUCTED, 0.34244619050309105, 3.925016347355051e-05, 0.23299656101835603,
+     False, "Sample Zone"),
+]
+
+
+@pytest.mark.parametrize("length, bearing, exhaust, pressure, flow, bath, feasible, binding", PINNED_10_K)
+def test_10_k_drive_gas_results_unchanged(assumptions, length, bearing, exhaust, pressure, flow, bath,
+                                          feasible, binding):
+    design = Design(rotor_length_mm=length, bearing=bearing, pivot_to_bath=False, cooling_path=VAPOUR_ONLY,
+                    turbine=FLUTED_CAP, exhaust_path=exhaust, drive_gas_temperature_k=10.0)
+    r = evaluate(design, assumptions)
+    # The search resolves the Supply Pressure to 1e-6, so a changed bracket moves it within that.
+    assert r.required_supply_pressure_bar == pytest.approx(pressure, rel=1e-5)
+    assert r.required_mass_flow_kg_s == pytest.approx(flow, rel=1e-5)
+    assert r.bath_heat_load_w == pytest.approx(bath, rel=1e-5)
+    assert r.feasible == feasible
+    assert r.binding_constraint == binding

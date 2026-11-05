@@ -9,7 +9,7 @@ from rotor_design.drag import cold_support_shear_torque, windage_torque
 from rotor_design.gas import GASES, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
-from rotor_design.nozzle import nozzle_flow
+from rotor_design.nozzle import ThroatSearchRangeError, nozzle_flow
 from rotor_design.rotordynamics import (first_bending_mode_hz, half_frequency_whirl_threshold_hz,
                                         rigid_body_critical_speeds_hz, rotor_mass_properties)
 from rotor_design.stress import rotating_tube_stress
@@ -20,8 +20,6 @@ from rotor_design.turbine import RADIAL_INFLOW, TURBINE_TYPES
 _FIT_TOLERANCE_MM = 1e-9
 PA_PER_TORR = 133.322
 PA_PER_BAR = 1e5
-# Required Supply Pressure is searched up to this multiple of the limit; beyond it, reported as inf.
-_PRESSURE_SEARCH_CEILING = 10.0
 _PRESSURE_REL_TOLERANCE = 1e-6
 _MARGIN_TOLERANCE = 1e-9
 
@@ -245,8 +243,8 @@ def evaluate(design, assumptions):
                                                      radius_m, spin, a.turbine_efficiency)
         return flow, torque
 
-    supply_p = _required_supply_pressure(drive, drag_torque, back_p,
-                                         _PRESSURE_SEARCH_CEILING * a.max_supply_pressure_bar * PA_PER_BAR)
+    # Searched only up to the Supply Pressure limit; a Design that needs more is reported as inf.
+    supply_p = _required_supply_pressure(drive, drag_torque, back_p, a.max_supply_pressure_bar * PA_PER_BAR)
     if math.isfinite(supply_p):
         flow, turbine_torque = drive(supply_p)
         mass_flow, choked, jet_v = nozzle_count * flow.mass_flow_kg_s, flow.choked, flow.jet_velocity_m_s
@@ -420,13 +418,23 @@ def evaluate(design, assumptions):
 
 
 def _required_supply_pressure(drive, drag_torque, back_pressure, ceiling):
-    """Lowest Supply Pressure whose turbine torque balances the drag; inf if none up to ceiling."""
-    if drive(ceiling)[1] < drag_torque:
+    """Lowest Supply Pressure whose turbine torque balances the drag; inf if none up to ceiling.
+
+    A pressure whose Nozzle throat falls below the search range (a liquid-like supply) is
+    counted as not balancing the drag, so it can only raise the answer, never invent one.
+    """
+    def balances(supply_p):
+        try:
+            return drive(supply_p)[1] >= drag_torque
+        except ThroatSearchRangeError:
+            return False
+
+    if not balances(ceiling):
         return math.inf
     lo, hi = back_pressure, ceiling
     while hi / lo > 1.0 + _PRESSURE_REL_TOLERANCE:
         mid = math.sqrt(lo * hi)  # geometric: the answer can lie decades above back pressure
-        if drive(mid)[1] < drag_torque:
+        if not balances(mid):
             lo = mid
         else:
             hi = mid
