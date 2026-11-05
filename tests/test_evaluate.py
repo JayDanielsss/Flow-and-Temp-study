@@ -1,12 +1,14 @@
 """Evaluate one Design: Design plus assumptions in, Results out."""
 
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from rotor_design.assumptions import load_assumptions
-from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, evaluate
+from rotor_design.bearing import GAS, MECHANICAL, MECHANICAL_WARNING, TWO_CENTER_PIVOT
+from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, configurations, evaluate
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
 
@@ -140,7 +142,9 @@ def test_lower_sample_conductivity_gives_hotter_sample(assumptions):
     poor = evaluate(Design(rotor_length_mm=20.0, sample_internal_heat_load_w=1e-5,
                            sample_conductivity_w_m_k=0.01), assumptions)
     assert poor.sample_hottest_temperature_k > good.sample_hottest_temperature_k
-    assert poor.sample_heat_load_breakdown_w["internal_load"] == pytest.approx(1e-5, rel=1e-6)
+    # The lower pivot warms the Bottom Cap end, so the Sample's lowest slice can sit just below
+    # the Sample Zone; only the part inside the zone counts.
+    assert 0.9e-5 < poor.sample_heat_load_breakdown_w["internal_load"] <= 1e-5 * (1 + 1e-6)
 
 
 def test_cooling_path_defaults_to_vapour_only_with_no_cold_support_terms(assumptions):
@@ -189,3 +193,88 @@ def test_smaller_cold_support_gap_cools_sample_until_shear_heating_dominates(ass
     assert hottest[-1] < vapour
     # Narrow gaps: shear heating grows faster than gap conduction and warms the Sample again.
     assert hottest[:coolest + 1] == sorted(hottest[:coolest + 1], reverse=True)
+
+
+def test_bearing_type_is_part_of_the_configuration(assumptions):
+    default = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert default.bearing == assumptions.bearing == TWO_CENTER_PIVOT
+    assert not default.pivot_to_bath
+    for bearing in (GAS, MECHANICAL, TWO_CENTER_PIVOT):
+        assert evaluate(Design(rotor_length_mm=20.0, bearing=bearing), assumptions).bearing == bearing
+
+
+def test_unknown_bearing_type_is_rejected(assumptions):
+    with pytest.raises(ValueError, match="Bearing"):
+        evaluate(Design(rotor_length_mm=20.0, bearing="magnetic"), assumptions)
+
+
+def test_each_bearing_reports_friction_stiffness_and_radial_space(assumptions):
+    for bearing in (GAS, MECHANICAL, TWO_CENTER_PIVOT):
+        r = evaluate(Design(rotor_length_mm=20.0, bearing=bearing), assumptions)
+        assert r.bearing_friction_torque_n_m > 0.0
+        assert r.bearing_stiffness_n_m > 0.0
+        assert r.bearing_radial_space_mm >= 0.0
+        assert r.sample_heat_load_breakdown_w["bearing_friction"] > 0.0
+        # Bearing friction is part of the drag the turbine must balance.
+        assert r.drag_torque_n_m > r.bearing_friction_torque_n_m
+        assert r.turbine_torque_n_m == pytest.approx(r.drag_torque_n_m, rel=1e-3)
+
+
+def test_bearing_radial_space_shrinks_the_largest_rotor_that_fits(assumptions):
+    # Each mm of radial space each side takes 2 mm off the Stator diameter budget.
+    pivots = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT), assumptions)
+    gas = evaluate(Design(rotor_length_mm=20.0, bearing=GAS), assumptions)
+    assert pivots.bearing_radial_space_mm == 0.0
+    assert pivots.max_rotor_diameter_mm == pytest.approx(7.874, abs=1e-3)
+    assert gas.max_rotor_diameter_mm == pytest.approx(7.874 - 2 * gas.bearing_radial_space_mm, abs=1e-3)
+    assert gas.fits_bore
+
+
+def test_bearing_gas_colder_than_the_rotor_never_cools_it(assumptions):
+    def with_gas_at(t_k):
+        bearings = {**assumptions.bearings, GAS: replace(assumptions.bearings[GAS], gas_temperature_k=t_k)}
+        return evaluate(Design(rotor_length_mm=20.0, bearing=GAS), replace(assumptions, bearings=bearings))
+
+    warm, cold = with_gas_at(10.0), with_gas_at(1.0)
+    assert warm.sample_heat_load_breakdown_w["convection"] > 0.0
+    assert cold.sample_heat_load_breakdown_w["convection"] == 0.0
+    assert min(cold.temperature_k) >= 1.2 - 1e-9
+
+
+def test_only_the_mechanical_bearing_carries_a_warning(assumptions):
+    for bearing in (GAS, MECHANICAL, TWO_CENTER_PIVOT):
+        r = evaluate(Design(rotor_length_mm=20.0, bearing=bearing), assumptions)
+        assert r.warning == (MECHANICAL_WARNING if bearing == MECHANICAL else "")
+
+
+def test_pivot_to_bath_conducts_through_the_lower_pivot(assumptions):
+    free = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT, pivot_to_bath=False), assumptions)
+    tied = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT, pivot_to_bath=True), assumptions)
+    assert free.pivot_heat_to_bath_w == 0.0
+    assert tied.pivot_heat_to_bath_w > 0.0
+    assert tied.temperature_k[0] < free.temperature_k[0]
+
+
+@pytest.mark.parametrize("bearing", [GAS, MECHANICAL])
+def test_pivot_to_bath_with_any_other_bearing_is_excluded(assumptions, bearing):
+    with pytest.raises(ValueError, match="Excluded Configuration"):
+        evaluate(Design(rotor_length_mm=20.0, bearing=bearing, pivot_to_bath=True), assumptions)
+
+
+def test_configurations_cover_every_allowed_combination_and_no_excluded_one():
+    combos = {(c["bearing"], c["pivot_to_bath"], c["cooling_path"]) for c in configurations()}
+    # 3 Bearing types x 2 cooling paths, plus the pivot-to-Bath option on two-center pivots.
+    assert len(combos) == 8
+    assert all(bearing == TWO_CENTER_PIVOT for bearing, tied, _ in combos if tied)
+
+
+def test_bottom_cap_warmed_by_lower_pivot_leaves_a_cold_sample_zone_above_it(assumptions):
+    # The solid zirconia Bottom Cap barely conducts at 1.2 K, so pivot friction warms its face
+    # above the limit while the Rotor above stays cold: the Sample Zone need not start at z = 0.
+    r = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT), assumptions)
+    assert r.temperature_k[0] > 1.3
+    assert r.sample_zone_mm >= 5.0
+    assert r.sample_hottest_temperature_k <= 1.3
+    assert r.feasible
+    assert r.sample_heat_load_breakdown_w["bearing_friction"] > 0.0
+    assert r.sample_heat_load_w == pytest.approx(sum(r.sample_heat_load_breakdown_w.values()))

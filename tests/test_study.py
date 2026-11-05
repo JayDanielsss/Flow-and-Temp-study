@@ -72,3 +72,18 @@ def test_study_compares_cooling_paths_and_plots_sample_heat_load_against_cold_su
     assert shear == sorted(shear, reverse=True)
 
     assert (tmp_path / "sample_heat_load_vs_cold_support_gap.png").stat().st_size > 0
+
+
+def test_study_compares_bearing_configurations_without_excluded_combinations(tmp_path):
+    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
+              cold_support_gaps_mm=[0.1])
+
+    with open(tmp_path / "bearing_configurations.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert {r["bearing"] for r in rows} == {"gas", "mechanical", "two_center_pivot"}
+    assert {r["cooling_path"] for r in rows} == {"vapour", "vapour_and_cold_support"}
+    assert all(r["bearing"] == "two_center_pivot" for r in rows if r["pivot_to_bath"] == "True")
+    for column in ("bearing_friction_torque_n_m", "bearing_stiffness_n_m", "bearing_radial_space_mm",
+                   "heat_bearing_friction_w", "warning"):
+        assert column in rows[0]
+    assert all(r["warning"] for r in rows if r["bearing"] == "mechanical")
