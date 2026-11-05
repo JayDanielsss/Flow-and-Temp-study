@@ -457,3 +457,10 @@ def test_gas_bearing_reports_whirl_threshold_and_is_ruled_out_below_it(assumptio
     assert r.critical_speed_separation > 0.2
     assert not r.feasible
     assert r.binding_constraint == "Whirl"
+
+
+def test_sample_volume_is_the_bore_cylinder_the_sample_fills(assumptions):
+    # 6 mm Rotor, 1 mm wall: a 4 mm bore; 5 mm of Sample gives pi * 2^2 * 5 mm^3.
+    r = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=6.0, wall_thickness_mm=1.0,
+                        sample_length_mm=5.0), assumptions)
+    assert r.sample_volume_mm3 == pytest.approx(62.832, abs=1e-3)

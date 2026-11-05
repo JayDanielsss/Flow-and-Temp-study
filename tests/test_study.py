@@ -1,17 +1,30 @@
 """Run the study: assumptions in, results CSV and plots out."""
 
 import csv
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
-from rotor_design.study import run_study
+from rotor_design.evaluate import Design, configurations
+from rotor_design.study import configuration_name, run_study
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
+# Every Configuration at two Rotor Lengths: the 10 mm Rotor is too short for a 5 mm Sample Zone.
+TINY_GRID = {"rotor_length_mm": [10.0, 20.0], "nozzle_throat_mm": [0.3], "cold_support_gap_mm": [0.1]}
+
+
+@pytest.fixture(scope="module")
+def tiny_study(tmp_path_factory):
+    """Plots folder of one full study over TINY_GRID, shared by the tests that only read it."""
+    plots = tmp_path_factory.mktemp("Plots")
+    run_study(ASSUMPTIONS_FILE, plots, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
+              cold_support_gaps_mm=[0.1], grid=TINY_GRID)
+    return plots
 
 
 def test_study_on_tiny_grid_writes_csv_and_plot(tmp_path):
-    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[10.0, 20.0])
+    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[10.0, 20.0], grid=TINY_GRID)
 
     with open(tmp_path / "probe_bore_fit.csv", newline="") as f:
         rows = list(csv.DictReader(f))
@@ -27,7 +40,7 @@ def test_study_on_tiny_grid_writes_csv_and_plot(tmp_path):
 
 def test_study_writes_required_flow_versus_nozzle_geometry(tmp_path):
     sweeps = {"nozzle_count": [2, 4], "nozzle_throat_mm": [0.2, 0.3], "nozzle_angle_deg": [10.0, 20.0]}
-    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps=sweeps)
+    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps=sweeps, grid=TINY_GRID)
 
     with open(tmp_path / "nozzle_geometry_sweep.csv", newline="") as f:
         rows = list(csv.DictReader(f))
@@ -40,28 +53,13 @@ def test_study_writes_required_flow_versus_nozzle_geometry(tmp_path):
     assert (tmp_path / "required_flow_vs_nozzle_geometry.png").stat().st_size > 0
 
 
-def test_study_ranks_feasible_designs_by_sample_heat_load_and_plots_profiles(tmp_path):
-    tiny = {"nozzle_count": [4]}
-    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[8.0, 14.0, 17.0, 20.0], nozzle_sweeps=tiny)
-
-    with open(tmp_path / "ranked_designs.csv", newline="") as f:
-        rows = list(csv.DictReader(f))
-    assert [int(r["rank"]) for r in rows] == [1, 2, 3, 4]
-    feasible = [r for r in rows if r["feasible"] == "True"]
-    loads = [float(r["sample_heat_load_w"]) for r in feasible]
-    assert loads == sorted(loads)
-    # Infeasible Designs (the 8 mm Rotor has too short a Sample Zone) come after every feasible one.
-    flags = [r["feasible"] == "True" for r in rows]
-    assert flags == sorted(flags, reverse=True)
-    assert "8.0" in {r["rotor_length_mm"] for r in rows if r["feasible"] == "False"}
-    assert "heat_turbine_cap_conduction_w" in rows[0]
-
-    assert (tmp_path / "temperature_profiles_top_designs.png").stat().st_size > 0
+def test_study_plots_temperature_profiles_of_top_designs(tiny_study):
+    assert (tiny_study / "temperature_profiles_top_designs.png").stat().st_size > 0
 
 
 def test_study_compares_cooling_paths_and_plots_sample_heat_load_against_cold_support_gap(tmp_path):
     run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
-              cold_support_gaps_mm=[0.01, 0.1, 1.0])
+              cold_support_gaps_mm=[0.01, 0.1, 1.0], grid=TINY_GRID)
 
     with open(tmp_path / "cold_support_gap_sweep.csv", newline="") as f:
         rows = list(csv.DictReader(f))
@@ -76,7 +74,7 @@ def test_study_compares_cooling_paths_and_plots_sample_heat_load_against_cold_su
 
 def test_study_compares_bearing_configurations_without_excluded_combinations(tmp_path):
     run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
-              cold_support_gaps_mm=[0.1])
+              cold_support_gaps_mm=[0.1], grid=TINY_GRID)
 
     with open(tmp_path / "bearing_configurations.csv", newline="") as f:
         rows = list(csv.DictReader(f))
@@ -95,7 +93,7 @@ def test_study_compares_bearing_configurations_without_excluded_combinations(tmp
 
 def test_study_compares_turbine_types_on_torque_per_unit_flow(tmp_path):
     run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[15.0, 20.0], nozzle_sweeps={"nozzle_count": [4]},
-              cold_support_gaps_mm=[0.1])
+              cold_support_gaps_mm=[0.1], grid=TINY_GRID)
 
     with open(tmp_path / "turbine_comparison.csv", newline="") as f:
         rows = list(csv.DictReader(f))
@@ -105,3 +103,40 @@ def test_study_compares_turbine_types_on_torque_per_unit_flow(tmp_path):
         assert float(r["turbine_torque_per_flow_n_m_s_kg"]) > 0.0
 
     assert (tmp_path / "torque_per_flow_by_turbine_type.png").stat().st_size > 0
+
+
+def test_full_study_ranks_only_feasible_designs_with_every_input_and_result(tiny_study):
+    with open(tiny_study / "ranked_designs.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert rows, "the 20 mm Rotor has Feasible Designs"
+    assert all(r["feasible"] == "True" for r in rows)
+    assert {float(r["rotor_length_mm"]) for r in rows} == {20.0}
+    assert [int(r["rank"]) for r in rows] == list(range(1, len(rows) + 1))
+    loads = [float(r["sample_heat_load_w"]) for r in rows]
+    assert loads == sorted(loads)
+    for column in [f.name for f in fields(Design)] + ["configuration", "sample_volume_mm3",
+                                                     "sample_heat_load_w", "bath_heat_load_w",
+                                                     "binding_constraint", "heat_windage_w"]:
+        assert column in rows[0]
+    assert {r["configuration"] for r in rows} <= {configuration_name(c) for c in configurations()}
+
+
+def test_full_study_maps_the_binding_constraint_for_each_configuration(tiny_study):
+    with open(tiny_study / "constraint_maps.csv", newline="") as f:
+        cells = list(csv.DictReader(f))
+    names = {configuration_name(c) for c in configurations()}
+    # One cell per Configuration, Rotor Length and Nozzle throat.
+    assert sorted((c["configuration"], float(c["rotor_length_mm"])) for c in cells) == sorted(
+        (n, length) for n in names for length in (10.0, 20.0))
+    assert all(float(c["nozzle_throat_mm"]) == 0.3 for c in cells)
+    # The 10 mm Rotor is ruled out by too short a Sample Zone in every Configuration.
+    assert {c["binding_constraint"] for c in cells if float(c["rotor_length_mm"]) == 10.0} == {"Sample Zone"}
+    assert all(c["feasible"] == "False" for c in cells if float(c["rotor_length_mm"]) == 10.0)
+
+    for name in names:
+        assert (tiny_study / f"constraint_map_{name}.png").stat().st_size > 0
+
+
+def test_full_study_plots_sample_heat_load_trade_off_and_breakdown(tiny_study):
+    for plot in ("sample_heat_load_vs_sample_volume.png", "sample_heat_load_breakdown_top_designs.png"):
+        assert (tiny_study / plot).stat().st_size > 0

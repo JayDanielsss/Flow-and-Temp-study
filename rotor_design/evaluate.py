@@ -33,6 +33,9 @@ VENTED = "vented"
 DUCTED = "ducted"
 EXHAUST_PATHS = (VENTED, DUCTED)
 STANDARD_GRAVITY = 9.80665
+# Every constraint, in build order; a Design that breaks several is ruled out by the first.
+CONSTRAINTS = ("Probe Bore", "Supply Pressure", "Stress", "Critical Speed", "Whirl", "Sample Zone",
+               "Sample Temperature", "Bath Heat Load")
 
 
 def is_excluded(bearing, pivot_to_bath):
@@ -112,6 +115,7 @@ class Results:
     sample_length_mm: float
     sample_conductivity_w_m_k: float
     sample_internal_heat_load_w: float
+    sample_volume_mm3: float        # the Rotor bore over the Sample length
     cooling_path: str
     cold_support_gap_mm: float      # nan without a Cold Support
     cold_support_drag_torque_n_m: float
@@ -318,6 +322,7 @@ def evaluate(design, assumptions):
         "Sample Temperature": (sample_limit_k - thermal.sample_hottest_temperature_k) / a.sample_zone_delta_t_k,
         "Bath Heat Load": (a.bath_cooling_power_w - bath_load) / a.bath_cooling_power_w,
     }
+    assert tuple(margins) == CONSTRAINTS
     # A Design that breaks several constraints is ruled out by the first in build order
     # (it cannot be built if it does not fit); otherwise the smallest margin limits it.
     violated = [name for name, margin in margins.items() if margin < -_MARGIN_TOLERANCE]
@@ -355,6 +360,7 @@ def evaluate(design, assumptions):
         sample_length_mm=sample_mm,
         sample_conductivity_w_m_k=sample_k,
         sample_internal_heat_load_w=sample_q,
+        sample_volume_mm3=math.pi * (inner_radius_m * 1e3) ** 2 * sample_mm,
         cooling_path=cooling_path,
         cold_support_gap_mm=cold_gap_mm,
         cold_support_drag_torque_n_m=cold_torque,

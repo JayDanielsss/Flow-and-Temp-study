@@ -58,6 +58,9 @@ class Assumptions:
     critical_speed_separation: float
     whirl_onset_ratio: float
     zirconia_conductivity_multiplier: float
+    study_grid: dict                # Design field -> values tried in the full study
+    study_top_designs: int
+    constraint_map_axes: tuple      # (x, y) Design fields
 
 
 def load_assumptions(path):
@@ -68,7 +71,7 @@ def load_assumptions(path):
     drag, baseline = raw["drag"], raw["design_baseline"]
     rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
     bearing, turbine, exhaust = raw["bearing"], raw["turbine"], raw["exhaust"]
-    stress, rotordynamics = raw["stress"], raw["rotordynamics"]
+    stress, rotordynamics, study = raw["stress"], raw["rotordynamics"], raw["study"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -130,4 +133,7 @@ def load_assumptions(path):
         critical_speed_separation=rotordynamics["critical_speed_separation"],
         whirl_onset_ratio=rotordynamics["whirl_onset_ratio"],
         zirconia_conductivity_multiplier=materials["zirconia_conductivity_multiplier"],
+        study_grid={field: tuple(values) for field, values in study["grid"].items()},
+        study_top_designs=study["top_designs"],
+        constraint_map_axes=(study["constraint_map_x"], study["constraint_map_y"]),
     )
