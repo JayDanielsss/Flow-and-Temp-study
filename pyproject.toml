@@ -1,0 +1,13 @@
+[project]
+name = "rotor_design"
+version = "0.1.0"
+description = "Design-limit calculations for a small gas-driven rotor and turbine"
+requires-python = ">=3.11"
+dependencies = ["numpy", "matplotlib"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
