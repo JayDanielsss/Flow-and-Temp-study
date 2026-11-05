@@ -339,8 +339,10 @@ def evaluate(design, assumptions):
     assert tuple(margins) == CONSTRAINTS
     # A Design that breaks several constraints is ruled out by the first in build order
     # (it cannot be built if it does not fit); otherwise the smallest margin limits it.
+    # A diameter sized to the Probe Bore has zero bore margin by construction, so it is left out.
     violated = [name for name, margin in margins.items() if margin < -_MARGIN_TOLERANCE]
-    binding = violated[0] if violated else min(margins, key=margins.get)
+    candidates = {k: v for k, v in margins.items() if k != "Probe Bore" or design.rotor_diameter_mm is not None}
+    binding = violated[0] if violated else min(candidates, key=candidates.get)
 
     return Results(
         rotor_length_mm=design.rotor_length_mm,

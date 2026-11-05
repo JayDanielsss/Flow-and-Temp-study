@@ -51,7 +51,16 @@ def test_20mm_rotor_at_largest_diameter_fits_bore_and_is_feasible(assumptions):
     assert results.projected_width_mm == pytest.approx(29.0, abs=1e-3)
     assert results.fits_bore
     assert results.feasible
-    assert results.binding_constraint == "Probe Bore"
+
+
+def test_sized_diameter_leaves_probe_bore_out_of_the_binding_constraint(assumptions):
+    # Sized to the Probe Bore, its margin is zero by construction and says nothing;
+    # the same diameter given explicitly keeps Probe Bore in the choice.
+    sized = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    explicit = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=sized.rotor_diameter_mm), assumptions)
+    assert sized.feasible and explicit.feasible
+    assert sized.binding_constraint != "Probe Bore"
+    assert explicit.binding_constraint == "Probe Bore"
 
 
 def test_oversized_stator_is_ruled_out_by_probe_bore(assumptions):
