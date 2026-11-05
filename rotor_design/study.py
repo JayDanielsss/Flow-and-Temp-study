@@ -14,6 +14,7 @@ import numpy as np
 
 from rotor_design.assumptions import load_assumptions
 from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, configurations, evaluate
+from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW, TURBINE_TYPES
 
 SERIES = "#2a78d6"
 INK = "#0b0b0b"
@@ -31,8 +32,9 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     nozzle_sweeps maps a Design field (nozzle_count, nozzle_throat_mm,
     nozzle_angle_deg) to the values tried, one field at a time about the baseline.
     Cold Support gaps are tried at the longest Rotor and compared with Vapour Cooling alone.
-    Every allowed Configuration (Bearing type, pivot-to-Bath option, cooling path) is
-    evaluated at the longest Rotor; excluded combinations are never evaluated.
+    Every allowed Configuration (Bearing type, pivot-to-Bath option, cooling path, Turbine type)
+    is evaluated at the longest Rotor; excluded combinations are never evaluated.
+    Both Turbine types are compared on torque per unit Drive Gas flow at each Rotor Length.
     """
     a = load_assumptions(assumptions_path)
     if rotor_lengths_mm is None:
@@ -78,6 +80,12 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
 
     _write_csv([evaluate(Design(rotor_length_mm=a.max_rotor_length_mm, **c), a) for c in configurations()],
                plots_dir / "bearing_configurations.csv")
+
+    by_turbine = {turbine: [evaluate(Design(rotor_length_mm=float(length), turbine=turbine), a)
+                            for length in rotor_lengths_mm]
+                  for turbine in TURBINE_TYPES}
+    _write_csv([r for rows in by_turbine.values() for r in rows], plots_dir / "turbine_comparison.csv")
+    _plot_turbine_comparison(by_turbine, a, plots_dir / "torque_per_flow_by_turbine_type.png")
     return results
 
 
@@ -216,6 +224,43 @@ def _plot_cold_support_gap(vapour, cold, assumptions, path):
     fig.suptitle(
         f"Vapour Cooling plus Cold Support, {assumptions.max_rotor_length_mm:g} mm Rotor "
         f"at {assumptions.target_spin_rate_hz:g} Hz (dotted: Vapour Cooling alone)",
+        color=INK, fontsize=11, x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+_TURBINE_LABELS = {FLUTED_CAP: "Fluted Cap", RADIAL_INFLOW: "Radial-Inflow"}
+
+
+def _plot_turbine_comparison(by_turbine, assumptions, path):
+    hub = assumptions.turbines[RADIAL_INFLOW].hub_exit_diameter_mm
+    panels = (
+        ("Torque per unit Drive Gas flow (mN m per g/s)", lambda r: r.turbine_torque_per_flow_n_m_s_kg),
+        ("Required Drive Gas flow (mg/s)", lambda r: r.required_mass_flow_kg_s * 1e6),
+    )
+    fig, axes = plt.subplots(1, len(panels), figsize=(10, 4.2), facecolor=SURFACE)
+    for ax, (label, value) in zip(axes, panels):
+        ax.set_facecolor(SURFACE)
+        for (turbine, rows), colour in zip(by_turbine.items(), RANK_COLOURS):
+            points = [(r.rotor_length_mm, value(r)) for r in rows if math.isfinite(value(r))]
+            if not points:
+                continue
+            ax.plot(*zip(*points), color=colour, linewidth=2, marker="o", markersize=4,
+                    markeredgecolor=SURFACE, markeredgewidth=1.2, label=_TURBINE_LABELS[turbine])
+        ax.set_xlabel("Rotor Length (mm)", color=INK_SECONDARY, fontsize=9)
+        ax.set_ylabel(label, color=INK_SECONDARY, fontsize=9)
+        ax.grid(color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(GRID)
+        ax.tick_params(colors=INK_SECONDARY, labelsize=8)
+    axes[0].legend(frameon=False, fontsize=8, labelcolor=INK)
+    fig.suptitle(
+        f"Turbine types at {assumptions.target_spin_rate_hz:g} Hz, largest Rotor that fits "
+        f"(Radial-Inflow hub exit {hub:g} mm)",
         color=INK, fontsize=11, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(path, dpi=150, facecolor=SURFACE)

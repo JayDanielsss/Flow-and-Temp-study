@@ -6,6 +6,7 @@ from pathlib import Path
 
 from rotor_design.bearing import GAS, MECHANICAL, TWO_CENTER_PIVOT, GasBearing, MechanicalBearing, TwoCenterPivots
 from rotor_design.geometry import StatorAllowance
+from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW, FlutedCap, RadialInflow
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,8 @@ class Assumptions:
     target_spin_rate_hz: float
     discharge_coefficient: float
     turbine_efficiency: float
+    turbine: str
+    turbines: dict                  # Turbine type -> its model
     rotor_stator_gap_mm: float
     accommodation_coefficient: float
     cooling_path: str
@@ -59,7 +62,7 @@ def load_assumptions(path):
     environment, drive, thermal = raw["environment"], raw["drive"], raw["thermal"]
     drag, baseline = raw["drag"], raw["design_baseline"]
     rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
-    bearing = raw["bearing"]
+    bearing, turbine = raw["bearing"], raw["turbine"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -85,6 +88,11 @@ def load_assumptions(path):
         target_spin_rate_hz=drive["target_spin_rate_hz"],
         discharge_coefficient=drive["discharge_coefficient"],
         turbine_efficiency=drive["turbine_efficiency"],
+        turbine=turbine["type"],
+        turbines={
+            FLUTED_CAP: FlutedCap(),
+            RADIAL_INFLOW: RadialInflow(**turbine["radial_inflow"]),
+        },
         rotor_stator_gap_mm=drag["rotor_stator_gap_mm"],
         accommodation_coefficient=drag["accommodation_coefficient"],
         cooling_path=cold_support["cooling_path"],

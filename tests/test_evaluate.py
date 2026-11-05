@@ -9,6 +9,7 @@ import pytest
 from rotor_design.assumptions import load_assumptions
 from rotor_design.bearing import GAS, MECHANICAL, MECHANICAL_WARNING, TWO_CENTER_PIVOT
 from rotor_design.evaluate import COLD_SUPPORT, VAPOUR_ONLY, Design, configurations, evaluate
+from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
 
@@ -262,10 +263,11 @@ def test_pivot_to_bath_with_any_other_bearing_is_excluded(assumptions, bearing):
 
 
 def test_configurations_cover_every_allowed_combination_and_no_excluded_one():
-    combos = {(c["bearing"], c["pivot_to_bath"], c["cooling_path"]) for c in configurations()}
-    # 3 Bearing types x 2 cooling paths, plus the pivot-to-Bath option on two-center pivots.
-    assert len(combos) == 8
-    assert all(bearing == TWO_CENTER_PIVOT for bearing, tied, _ in combos if tied)
+    combos = {(c["bearing"], c["pivot_to_bath"], c["cooling_path"], c["turbine"]) for c in configurations()}
+    # (3 Bearing types x 2 cooling paths, plus the pivot-to-Bath option on two-center pivots) x 2 Turbine types.
+    assert len(combos) == 16
+    assert all(bearing == TWO_CENTER_PIVOT for bearing, tied, _, _ in combos if tied)
+    assert {turbine for *_, turbine in combos} == {FLUTED_CAP, RADIAL_INFLOW}
 
 
 def test_bottom_cap_warmed_by_lower_pivot_leaves_a_cold_sample_zone_above_it(assumptions):
@@ -278,3 +280,40 @@ def test_bottom_cap_warmed_by_lower_pivot_leaves_a_cold_sample_zone_above_it(ass
     assert r.feasible
     assert r.sample_heat_load_breakdown_w["bearing_friction"] > 0.0
     assert r.sample_heat_load_w == pytest.approx(sum(r.sample_heat_load_breakdown_w.values()))
+
+
+def test_turbine_type_is_part_of_the_configuration(assumptions):
+    default = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert default.turbine == assumptions.turbine == FLUTED_CAP
+    assert math.isnan(default.hub_exit_diameter_mm)
+    radial = evaluate(Design(rotor_length_mm=20.0, turbine=RADIAL_INFLOW), assumptions)
+    assert radial.turbine == RADIAL_INFLOW
+    assert radial.hub_exit_diameter_mm == assumptions.turbines[RADIAL_INFLOW].hub_exit_diameter_mm
+    assert radial.turbine_torque_n_m == pytest.approx(radial.drag_torque_n_m, rel=1e-3)
+
+
+def test_unknown_turbine_type_is_rejected(assumptions):
+    with pytest.raises(ValueError, match="Turbine"):
+        evaluate(Design(rotor_length_mm=20.0, turbine="pelton"), assumptions)
+
+
+def test_hub_exit_takes_blade_area_from_the_turbine_cap(assumptions):
+    fluted = evaluate(Design(rotor_length_mm=20.0, turbine=FLUTED_CAP), assumptions)
+    radial = evaluate(Design(rotor_length_mm=20.0, turbine=RADIAL_INFLOW, hub_exit_diameter_mm=3.0), assumptions)
+    cap_area = math.pi * (fluted.rotor_diameter_mm / 2) ** 2
+    assert fluted.turbine_blade_area_mm2 == pytest.approx(cap_area)
+    assert radial.turbine_blade_area_mm2 == pytest.approx(cap_area - math.pi * 1.5**2)
+
+
+def test_radial_inflow_needs_less_drive_gas_than_fluted_cap(assumptions):
+    # Gas leaving at the hub carries away less angular momentum than gas leaving at the rim.
+    fluted = evaluate(Design(rotor_length_mm=20.0, turbine=FLUTED_CAP), assumptions)
+    radial = evaluate(Design(rotor_length_mm=20.0, turbine=RADIAL_INFLOW), assumptions)
+    assert radial.turbine_torque_per_flow_n_m_s_kg > fluted.turbine_torque_per_flow_n_m_s_kg
+    assert radial.required_mass_flow_kg_s < fluted.required_mass_flow_kg_s
+
+
+def test_wider_hub_exit_lowers_torque_per_unit_flow(assumptions):
+    narrow, wide = (evaluate(Design(rotor_length_mm=20.0, turbine=RADIAL_INFLOW, hub_exit_diameter_mm=d),
+                             assumptions) for d in (1.0, 6.0))
+    assert wide.turbine_torque_per_flow_n_m_s_kg < narrow.turbine_torque_per_flow_n_m_s_kg
