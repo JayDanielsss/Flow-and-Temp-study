@@ -1,0 +1,35 @@
+# Benchmark Case H4. Only the compressor maximum capacity is reported (80 / 120 NL/min at 270 kPa),
+# not the flow or pressure at any operating point.
+id = "H4"
+name = "Li et al. 2021: commercial closed-cycle helium system, 3.2 mm Rotor"
+
+[sources]
+li2021 = "Y. Li, R. Chaklashiya, H. Takahashi, Y. Kawahara, K. Tagami, C. Tobar, S. Han, \"[...] at ultra low temperature of hydrated alanine doped with [...] radicals,\" J. [...] Reson. 333, 107090 (2021). https://doi.org/10.1016/j.jmr.2021.107090 (accepted manuscript: https://par.nsf.gov/servlets/purl/10340135; sections refer to it)"
+
+[inputs]
+drive_gas = { value = "helium", source = "li2021", location = "§3 Instrumentation", flag = "M" }
+rotor_material = { value = "silicon nitride", source = "li2021", location = "§2 Methods (Vespel caps)", flag = "M" }
+rotor_length_mm = { note = "not reported" }
+rotor_diameter_mm = { value = 3.2, source = "li2021", location = "§2 Methods", flag = "M" }
+wall_thickness_mm = { note = "not reported" }
+bearing = { value = "gas", source = "li2021", location = "§3 Instrumentation", flag = "M" }
+drive_gas_temperature_k = { note = "not reported per operating point" }
+environment_temperature_k = { note = "not reported" }
+environment_pressure_bar = { note = "not reported" }
+turbine = { note = "not reported" }
+nozzle_count = { note = "not reported" }
+nozzle_throat_mm = { note = "not reported" }
+nozzle_angle_deg = { note = "not reported" }
+back_pressure_bar = { note = "not reported" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 8000.0, source = "li2021", location = "§3; Fig. 3D", flag = "M" }
+measured.sample_temperature_k = { value = 26.0, source = "li2021", location = "§3; Fig. 3D", flag = "M" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 10000.0, source = "li2021", location = "§3; Fig. 3D", flag = "M" }
+measured.sample_temperature_k = { value = 30.0, source = "li2021", location = "§3; Fig. 3D", flag = "M" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 12000.0, source = "li2021", location = "§3; Fig. 3D", flag = "M" }
+measured.sample_temperature_k = { value = 50.0, source = "li2021", location = "§3; Fig. 3D", flag = "M" }

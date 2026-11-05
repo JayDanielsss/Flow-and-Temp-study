@@ -1,0 +1,55 @@
+# Benchmark Case K2, rotor B: a 9.5 mm zirconia sphere spun and supported by one gas jet.
+# Not a tube Rotor, and its surface grooves are not a model Turbine type. Flow is not reported.
+id = "K2"
+name = "Osborn Popp et al. 2020; Chen et al. 2018: 9.5 mm spherical Rotor, single drive jet"
+
+[sources]
+osbornpopp2020 = "T. M. Osborn Popp, A. Dapp, C. Gao, P.-H. Chen, L. E. Price, N. H. Alaniva, A. B. Barnes, \"Highly stable [...] spherical rotors,\" [...] Reson. 1, 97-103 (2020). https://doi.org/10.5194/mr-1-97-2020"
+chen2018 = "P. Chen, B. J. Albert, C. Gao, N. Alaniva, L. E. Price, F. J. Scott, E. P. Saliba, E. L. Sesti, P. T. Judge, E. W. Fisher, A. B. Barnes, \"[...] spheres,\" Sci. Adv. 4(9), eaau1540 (2018). https://doi.org/10.1126/sciadv.aau1540 (full text: https://pmc.ncbi.nlm.nih.gov/articles/PMC6155130/)"
+
+[inputs]
+drive_gas = { value = "air", source = "osbornpopp2020", location = "§3; Fig. 3a", flag = "M" }
+rotor_material = { value = "zirconia", source = "osbornpopp2020", location = "§2 (yttria-stabilised)", flag = "M" }
+rotor_length_mm = { note = "sphere; no Rotor Length" }
+rotor_diameter_mm = { value = 9.5, source = "osbornpopp2020", location = "§2", flag = "M" }
+wall_thickness_mm = { note = "sphere with a 2.54 mm through hole; no tube wall" }
+bearing = { value = "single drive jet", source = "osbornpopp2020", location = "§1 (one gas stream supports and drives)", flag = "M" }
+drive_gas_temperature_k = { note = "not stated" }
+environment_temperature_k = { note = "not stated" }
+environment_pressure_bar = { note = "not stated" }
+turbine = { value = "surface grooves", source = "osbornpopp2020", location = "Fig. 2 caption (rotor B: 6 Pelton-style, 0.25 mm radius)", flag = "M" }
+nozzle_count = { value = 1, source = "osbornpopp2020", location = "§3; Fig. 1c", flag = "M" }
+nozzle_throat_mm = { note = "not reported" }
+nozzle_angle_deg = { note = "tangent to the sphere equator; no angle from a rim tangent defined" }
+back_pressure_bar = { note = "not stated" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 1600.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+measured.supply_pressure_bar_gauge = { value = 0.2, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 3100.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+measured.supply_pressure_bar_gauge = { value = 1.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 4300.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+measured.supply_pressure_bar_gauge = { value = 2.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 4900.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+measured.supply_pressure_bar_gauge = { value = 3.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 5500.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+measured.supply_pressure_bar_gauge = { value = 4.0, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 5700.0, source = "osbornpopp2020", location = "§3 (maximum, rotor B)", flag = "M" }
+measured.supply_pressure_bar_gauge = { value = 4.4, source = "osbornpopp2020", location = "Fig. 3a (rotor B)", flag = "F" }
+
+# Same 9.5 mm sphere design spun on helium; gauge or absolute not stated.
+[[points]]
+inputs.drive_gas = { value = "helium", source = "chen2018", location = "Results; Fig. S3 caption", flag = "M" }
+inputs.rotor_diameter_mm = { value = 9.525, source = "chen2018", location = "Materials & Methods", flag = "M" }
+inputs.spin_rate_hz = { value = 10600.0, source = "chen2018", location = "Results; Fig. S3 caption", flag = "M" }
+measured.supply_pressure_bar = { value = 11.0, source = "chen2018", location = "Results; Fig. S3 caption (\"11-bar\")", flag = "M, U" }

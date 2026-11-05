@@ -135,3 +135,15 @@ whirl_onset_ratio = 2.0          # placeholder rule of thumb: gas-bearing whirl 
 
 [materials]
 zirconia_conductivity_multiplier = 1.0  # Input Uncertainty range x0.3 to x3
+
+[benchmark]
+# Allowed |Model-Form Error|, (predicted - measured) / measured, for each measured quantity.
+[benchmark.tolerance]
+supply_pressure_bar = 0.3        # placeholder, no basis yet
+supply_pressure_bar_gauge = 0.3  # placeholder
+mass_flow_kg_s = 0.3             # placeholder
+torque_n_m = 0.5                 # placeholder
+drag_power_w = 0.5               # placeholder
+sample_temperature_k = 0.2       # placeholder
+sample_heat_load_w = 0.5         # placeholder
+bath_heat_load_w = 0.5           # placeholder

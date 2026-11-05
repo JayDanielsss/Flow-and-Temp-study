@@ -1,0 +1,28 @@
+# Benchmark Case H7. Nitrogen drives and supports the Rotor; liquid helium cools the sample.
+# Liquid-helium use (about 3 L/h at 25 K, 6.7 kHz) is a heat-load proxy, not a heat load in watts.
+id = "H7"
+name = "Thurber & Tycko 2008; Thurber et al. 2013: nitrogen-driven 4 mm Rotor, helium-cooled sample"
+
+[sources]
+thurber2008 = "K. R. Thurber, R. Tycko, \"Biomolecular [...] at 25 K,\" J. [...] Reson. 195(2), 179-186 (2008). https://doi.org/10.1016/j.jmr.2008.09.015 (author manuscript: https://pmc.ncbi.nlm.nih.gov/articles/PMC2632798/)"
+thurber2013 = "K. R. Thurber, A. Potapov, W.-M. Yau, R. Tycko, \"[...] below 25 K,\" J. [...] Reson. 226, 100-106 (2013). https://doi.org/10.1016/j.jmr.2012.11.009 (author manuscript: https://pmc.ncbi.nlm.nih.gov/articles/PMC3529848/)"
+
+[inputs]
+drive_gas = { value = "nitrogen", source = "thurber2008", location = "§2.1", flag = "M" }
+rotor_material = { value = "zirconia", source = "thurber2013", location = "§II", flag = "M" }
+rotor_length_mm = { value = 45.7, source = "thurber2008", location = "§2.1", flag = "M" }
+rotor_diameter_mm = { value = 4.0, source = "thurber2008", location = "§2.1", flag = "M" }
+wall_thickness_mm = { value = 0.381, source = "thurber2013", location = "§II (test rotor)", flag = "M" }
+bearing = { value = "gas", source = "thurber2008", location = "§2.1 (ceramic gas Bearings)", flag = "M" }
+drive_gas_temperature_k = { note = "room temperature; value not stated" }
+environment_temperature_k = { note = "not reported" }
+environment_pressure_bar = { note = "not reported" }
+turbine = { note = "commercial 4 mm drive tip; type not reported" }
+nozzle_count = { note = "not reported" }
+nozzle_throat_mm = { note = "not reported" }
+nozzle_angle_deg = { note = "not reported" }
+back_pressure_bar = { note = "not reported" }
+
+[[points]]
+inputs.spin_rate_hz = { value = 6700.0, source = "thurber2008", location = "Abstract; §2.1 (6.7 kHz +/- 5 Hz)", flag = "M" }
+measured.sample_temperature_k = { value = 25.0, source = "thurber2008", location = "§3.5", flag = "M" }
