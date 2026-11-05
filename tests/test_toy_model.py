@@ -22,8 +22,8 @@ import numpy as np
 import pytest
 
 from rotor_design.assumptions import load_assumptions
-from rotor_design.bearing import TWO_CENTER_PIVOT, TwoCenterPivots
-from rotor_design.evaluate import DUCTED, PA_PER_BAR, PA_PER_TORR, VAPOUR_ONLY, Design, evaluate
+from rotor_design.bearing import MECHANICAL, TWO_CENTER_PIVOT, MechanicalBearing, TwoCenterPivots
+from rotor_design.evaluate import DUCTED, PA_PER_BAR, PA_PER_TORR, STANDARD_GRAVITY, VAPOUR_ONLY, Design, evaluate
 from rotor_design.turbine import FLUTED_CAP
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
@@ -123,3 +123,41 @@ def test_a_warmer_stator_radiates_into_the_rotor():
     assert base.sample_heat_load_breakdown_w["radiation"] == 0.0
     assert hot.sample_heat_load_breakdown_w["radiation"] > 0.0
     assert max(hot.temperature_k) > max(base.temperature_k)
+
+
+def test_heated_rotor_matches_the_analytical_fin():
+    # Heated toy: all windage heat enters the Rotor, and a mechanical Bearing (mu 0.01,
+    # 0.05 N preload, 2 mm race) puts its friction heat in at the Bottom Cap end. The Bottom
+    # Cap is made negligible (0.01 mm) and the Sample non-conducting, so the 17 mm body is a
+    # uniform zirconia tube: a fin with distributed source q', tip heat Q at z = 0, cooled to
+    # the 300 K Stator and held at 300 K at the Turbine Cap (z = Lb):
+    #   k A T'' - h P (T - 300) + q' = 0,  -k A T'(0) = Q,  T(Lb) = 300
+    #   theta = T - 300 - q' / (h P) = C1 cosh(m z) + C2 sinh(m z),  m = sqrt(h P / (k A))
+    #   C2 = -Q / (k A m),  C1 = (-q' / (h P) - C2 sinh(m Lb)) / cosh(m Lb)
+    # Constants at 300 K (the rise is under 2 K):
+    #   k A = 2.225 W/(m K) (zirconia at 299 K) * 8.6394e-6 m^2 = 1.9223e-5 W m/K
+    #   h: k / gap = 25.94e-3 / 1e-4 = 259.4, free-molecular 6 p sqrt(R / (8 pi T)) = 1.1902e5,
+    #      joined harmonically 258.84 W/(m^2 K);  h P = 258.84 * 2 pi * 3e-3 = 4.8791 W/(m K)
+    #   m = sqrt(4.8791 / 1.9223e-5) = 503.8 1/m,  m Lb = 8.565
+    #   q' = windage 3.9971e-6 N m * 6283.19 / 0.020 m = 1.2557 W/m,  q' / (h P) = 0.2574 K
+    #   Q = mu (P + W / 2) d_m / 2 * omega for one station, d_m = 6 + 2 = 8 mm
+    # A long fin (tanh 8.565 = 1): tip rise 0.2574 + Q / (k A m) = 0.2574 + 103.26 Q  (about 1.73 K)
+    assumptions = _toy_assumptions(windage_heat_to_rotor_fraction=1.0, bottom_cap_thickness_mm=0.01,
+                                   sample_conductivity_w_m_k=1e-9)
+    assumptions = replace(assumptions, bearings={**assumptions.bearings, MECHANICAL: MechanicalBearing(
+        friction_coefficient=0.01, preload_n=0.05, stiffness_n_m=1e7, radial_space_mm=2.0)})
+    heated = evaluate(replace(TOY_DESIGN, bearing=MECHANICAL, sample_length_mm=1.0), assumptions)
+
+    omega = 2.0 * math.pi * 1000.0
+    q_tip = 0.01 * (0.05 + heated.rotor_mass_kg * STANDARD_GRAVITY / 2.0) * 8e-3 / 2.0 * omega
+    assert heated.bearing_friction_torque_n_m / 2.0 * omega == pytest.approx(q_tip, rel=1e-9)
+    k_a, h_p, q_line, body = 1.9223e-5, 4.8791, 1.2557, 0.017
+    m = math.sqrt(h_p / k_a)
+    c2 = -q_tip / (k_a * m)
+    c1 = (-q_line / h_p - c2 * math.sinh(m * body)) / math.cosh(m * body)
+    z = np.array(heated.z_mm) / 1e3
+    rise = q_line / h_p + c1 * np.cosh(m * z) + c2 * np.sinh(m * z)
+
+    assert rise[0] == pytest.approx(0.2574 + 103.26 * q_tip, rel=1e-3)
+    assert rise[0] == pytest.approx(1.73, abs=0.01)
+    assert np.max(np.abs((np.array(heated.temperature_k) - 300.0) - rise)) < 0.01 * rise[0]
