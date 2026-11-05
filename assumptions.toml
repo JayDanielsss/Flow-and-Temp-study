@@ -78,6 +78,7 @@ hub_exit_diameter_mm = 3.0     # placeholder; cut from the Turbine Cap, the blad
 [drag]
 rotor_stator_gap_mm = 0.1      # placeholder radial gap between Rotor and Stator
 accommodation_coefficient = 1.0 # placeholder: fully diffuse reflection
+windage_torque_multiplier = 1.0 # 1 is the windage model as built; the Model-Form Error spreads it
 
 [cold_support]
 # Cooling path: "vapour" (Vapour Cooling alone) or "vapour_and_cold_support"
@@ -137,6 +138,35 @@ whirl_onset_ratio = 2.0          # placeholder rule of thumb: gas-bearing whirl 
 
 [materials]
 zirconia_conductivity_multiplier = 1.0  # Input Uncertainty range x0.3 to x3
+
+[uncertainty]
+# Monte Carlo over the Input Uncertainty, on the top-ranked Designs of the full study.
+# Each sample draws every input below, then spreads the knob of each Reference Case mechanism
+# by its Model-Form Error: knob x (1 + e), e normal with the mechanism's rms error as its
+# standard deviation. The spread is centred, so the median stays the model as built.
+samples = 200
+seed = 1
+designs = 10                   # top-ranked Designs (Feasible first) given bands
+reference_cases = "references" # relative to this file
+percentiles = [5.0, 95.0]
+
+# Input Uncertainty: Assumptions field -> distribution, "uniform" or "log_uniform" over [low, high].
+# mechanical_ and pivot_friction_coefficient set the Bearing models' friction coefficients.
+[uncertainty.inputs]
+zirconia_conductivity_multiplier = { distribution = "log_uniform", low = 0.3, high = 3.0 }
+discharge_coefficient = { distribution = "uniform", low = 0.6, high = 0.95 }       # placeholder range
+accommodation_coefficient = { distribution = "uniform", low = 0.5, high = 1.0 }    # placeholder range
+mechanical_friction_coefficient = { distribution = "log_uniform", low = 0.003, high = 0.03 }  # placeholder range
+pivot_friction_coefficient = { distribution = "log_uniform", low = 0.03, high = 0.3 }         # placeholder range
+turbine_efficiency = { distribution = "uniform", low = 0.5, high = 1.0 }           # placeholder range
+
+# Reference Case mechanism -> the knob its Model-Form Error spreads.
+[uncertainty.model_form_knobs]
+nozzle = "discharge_coefficient"
+windage = "windage_torque_multiplier"
+rarefied_drag = "accommodation_coefficient"
+turbine = "turbine_efficiency"
+conduction = "zirconia_conductivity_multiplier"
 
 [benchmark]
 # Allowed |Model-Form Error|, (predicted - measured) / measured, for each measured quantity.

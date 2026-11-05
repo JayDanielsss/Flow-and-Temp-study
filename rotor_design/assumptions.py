@@ -37,6 +37,7 @@ class Assumptions:
     turbines: dict                  # Turbine type -> its model
     rotor_stator_gap_mm: float
     accommodation_coefficient: float
+    windage_torque_multiplier: float
     cooling_path: str
     cold_support_gap_mm: float
     cold_support_gap_sweep_mm: tuple
@@ -64,6 +65,13 @@ class Assumptions:
     study_top_designs: int
     constraint_map_axes: tuple      # (x, y) Design fields
     benchmark_tolerance: dict       # measured quantity -> allowed |Model-Form Error|
+    uncertainty_samples: int
+    uncertainty_seed: int
+    uncertainty_designs: int        # top-ranked Designs given Monte Carlo bands
+    uncertainty_percentiles: tuple  # (lower, upper) band edges, in percent
+    uncertainty_inputs: dict        # uncertain input -> (distribution, low, high)
+    model_form_knobs: dict          # Reference Case mechanism -> the input its Model-Form Error spreads
+    reference_cases_dir: Path
 
 
 def load_assumptions(path):
@@ -75,7 +83,7 @@ def load_assumptions(path):
     rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
     bearing, turbine, exhaust = raw["bearing"], raw["turbine"], raw["exhaust"]
     stress, rotordynamics, study = raw["stress"], raw["rotordynamics"], raw["study"]
-    benchmark = raw["benchmark"]
+    benchmark, uncertainty = raw["benchmark"], raw["uncertainty"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -112,6 +120,7 @@ def load_assumptions(path):
         },
         rotor_stator_gap_mm=drag["rotor_stator_gap_mm"],
         accommodation_coefficient=drag["accommodation_coefficient"],
+        windage_torque_multiplier=drag["windage_torque_multiplier"],
         cooling_path=cold_support["cooling_path"],
         cold_support_gap_mm=cold_support["gap_mm"],
         cold_support_gap_sweep_mm=tuple(cold_support["gap_sweep_mm"]),
@@ -143,4 +152,12 @@ def load_assumptions(path):
         study_top_designs=study["top_designs"],
         constraint_map_axes=(study["constraint_map_x"], study["constraint_map_y"]),
         benchmark_tolerance=dict(benchmark["tolerance"]),
+        uncertainty_samples=uncertainty["samples"],
+        uncertainty_seed=uncertainty["seed"],
+        uncertainty_designs=uncertainty["designs"],
+        uncertainty_percentiles=tuple(uncertainty["percentiles"]),
+        uncertainty_inputs={name: (d["distribution"], d["low"], d["high"])
+                            for name, d in uncertainty["inputs"].items()},
+        model_form_knobs=dict(uncertainty["model_form_knobs"]),
+        reference_cases_dir=Path(path).resolve().parent / uncertainty["reference_cases"],
     )
