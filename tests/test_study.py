@@ -9,6 +9,9 @@ import pytest
 from rotor_design.evaluate import Design, configurations
 from rotor_design.study import configuration_name, run_study
 
+# Every test here runs the study end to end: excluded from the default run (see README.md).
+pytestmark = pytest.mark.slow
+
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
 # Every Configuration at two Rotor Lengths: the 10 mm Rotor is too short for a 5 mm Sample Zone.
 TINY_GRID = {"rotor_length_mm": [10.0, 20.0], "nozzle_throat_mm": [0.3], "cold_support_gap_mm": [0.1]}

@@ -3,7 +3,6 @@
 import csv
 import itertools
 import math
-import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, fields, replace
 from functools import partial
@@ -80,10 +79,20 @@ def _or(value, default):
     return default if value is None else value
 
 
+# Worker processes used when the caller gives none. Worker processes re-import the caller's main
+# module, which fails (BrokenProcessPool) when that module is stdin or an interactive session, so
+# the default is one (this process) and script entry points such as run_study.py ask for more.
+DEFAULT_WORKERS = 1
+
+
+def _workers(workers):
+    return max(1, workers or DEFAULT_WORKERS)
+
+
 def evaluate_all(designs, assumptions, workers=None):
-    """Evaluate Designs in order, spread over worker processes (workers=1 runs in this process)."""
+    """Evaluate Designs in order, over worker processes when workers > 1 (default: one, in this process)."""
     designs = list(designs)
-    workers = workers or os.cpu_count() or 1
+    workers = _workers(workers)
     if workers == 1 or len(designs) < 2:
         return [evaluate(d, assumptions) for d in designs]
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -96,9 +105,12 @@ def _evaluate_pair(pair):
 
 
 def evaluate_samples(designs, samples, workers=None):
-    """Each Design evaluated on every Monte Carlo sample of the assumptions: one list of Results per Design."""
+    """Each Design evaluated on every Monte Carlo sample of the assumptions: one list of Results per Design.
+
+    Over worker processes when workers > 1 (default: one, in this process).
+    """
     pairs = [(d, s) for d in designs for s in samples]
-    workers = workers or os.cpu_count() or 1
+    workers = _workers(workers)
     if workers == 1 or len(pairs) < 2:
         flat = [evaluate(d, s) for d, s in pairs]
     else:
