@@ -10,7 +10,7 @@ from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
 from rotor_design.nozzle import nozzle_flow
 from rotor_design.thermal import rotor_thermal
-from rotor_design.turbine import fluted_cap_torque
+from rotor_design.turbine import RADIAL_INFLOW, TURBINE_TYPES
 
 # Slack for a Design that sits exactly on the bore limit (mm).
 _FIT_TOLERANCE_MM = 1e-9
@@ -34,12 +34,14 @@ def is_excluded(bearing, pivot_to_bath):
 
 
 def configurations():
-    """Every allowed combination of Bearing type, pivot-to-Bath option and cooling path, as Design fields."""
+    """Every allowed combination of Bearing type, pivot-to-Bath option, cooling path and Turbine type,
+    as Design fields."""
     return [
-        {"bearing": bearing, "pivot_to_bath": tied, "cooling_path": path}
+        {"bearing": bearing, "pivot_to_bath": tied, "cooling_path": path, "turbine": turbine}
         for bearing in BEARING_TYPES
         for tied in (False, True)
         for path in COOLING_PATHS
+        for turbine in TURBINE_TYPES
         if not is_excluded(bearing, tied)
     ]
 
@@ -62,6 +64,8 @@ class Design:
     cold_support_gap_mm: float | None = None
     bearing: str | None = None
     pivot_to_bath: bool | None = None
+    turbine: str | None = None
+    hub_exit_diameter_mm: float | None = None   # Radial-Inflow only
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,11 @@ class Results:
     required_mass_flow_kg_s: float
     nozzle_choked: bool
     jet_velocity_m_s: float
+    turbine: str
+    hub_exit_diameter_mm: float     # nan for a Fluted Cap
+    turbine_blade_area_mm2: float   # Turbine Cap face left to the blades or flutes
     turbine_torque_n_m: float
+    turbine_torque_per_flow_n_m_s_kg: float
     drag_torque_n_m: float          # windage, Cold Support gap shear and Bearing friction
     windage_regime: str
     knudsen_number: float
@@ -133,6 +141,12 @@ def evaluate(design, assumptions):
     if is_excluded(bearing, pivot_to_bath):
         raise ValueError(f"Excluded Configuration: pivot-to-Bath needs two-center pivots, not {bearing!r}")
     bearing_model = a.bearings[bearing]
+    turbine = _or(design.turbine, a.turbine)
+    if turbine not in TURBINE_TYPES:
+        raise ValueError(f"Unknown Turbine type {turbine!r}; expected one of {TURBINE_TYPES}")
+    turbine_model = a.turbines[turbine]
+    if turbine == RADIAL_INFLOW and design.hub_exit_diameter_mm is not None:
+        turbine_model = replace(turbine_model, hub_exit_diameter_mm=design.hub_exit_diameter_mm)
     allowance = replace(a.stator_allowance, bearing_radial_space=bearing_model.radial_space_mm)
     largest = max_rotor_diameter(design.rotor_length_mm, allowance, a.bore_diameter_mm, a.tilt_angle_deg)
     diameter = _or(design.rotor_diameter_mm, largest)
@@ -177,8 +191,8 @@ def evaluate(design, assumptions):
 
     def drive(supply_p):
         flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient)
-        torque = nozzle_count * fluted_cap_torque(flow.mass_flow_kg_s, flow.jet_velocity_m_s, angle_deg,
-                                                  radius_m, spin, a.turbine_efficiency)
+        torque = nozzle_count * turbine_model.torque(flow.mass_flow_kg_s, flow.jet_velocity_m_s, angle_deg,
+                                                     radius_m, spin, a.turbine_efficiency)
         return flow, torque
 
     supply_p = _required_supply_pressure(drive, drag_torque, back_p,
@@ -259,7 +273,11 @@ def evaluate(design, assumptions):
         required_mass_flow_kg_s=mass_flow,
         nozzle_choked=choked,
         jet_velocity_m_s=jet_v,
+        turbine=turbine,
+        hub_exit_diameter_mm=turbine_model.hub_exit_diameter_mm,
+        turbine_blade_area_mm2=turbine_model.blade_area_m2(radius_m) * 1e6,
         turbine_torque_n_m=turbine_torque,
+        turbine_torque_per_flow_n_m_s_kg=turbine_torque / mass_flow if math.isfinite(mass_flow) else math.nan,
         drag_torque_n_m=drag_torque,
         windage_regime=windage.regime,
         knudsen_number=windage.knudsen_number,

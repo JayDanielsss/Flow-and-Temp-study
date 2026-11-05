@@ -87,3 +87,17 @@ def test_study_compares_bearing_configurations_without_excluded_combinations(tmp
                    "heat_bearing_friction_w", "warning"):
         assert column in rows[0]
     assert all(r["warning"] for r in rows if r["bearing"] == "mechanical")
+
+
+def test_study_compares_turbine_types_on_torque_per_unit_flow(tmp_path):
+    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[15.0, 20.0], nozzle_sweeps={"nozzle_count": [4]},
+              cold_support_gaps_mm=[0.1])
+
+    with open(tmp_path / "turbine_comparison.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert sorted((r["turbine"], float(r["rotor_length_mm"])) for r in rows) == [
+        ("fluted_cap", 15.0), ("fluted_cap", 20.0), ("radial_inflow", 15.0), ("radial_inflow", 20.0)]
+    for r in rows:
+        assert float(r["turbine_torque_per_flow_n_m_s_kg"]) > 0.0
+
+    assert (tmp_path / "torque_per_flow_by_turbine_type.png").stat().st_size > 0
