@@ -29,6 +29,8 @@ class Assumptions:
     target_spin_rate_hz: float
     discharge_coefficient: float
     turbine_efficiency: float
+    exhaust_path: str
+    ducted_back_pressure_bar: float
     turbine: str
     turbines: dict                  # Turbine type -> its model
     rotor_stator_gap_mm: float
@@ -62,7 +64,7 @@ def load_assumptions(path):
     environment, drive, thermal = raw["environment"], raw["drive"], raw["thermal"]
     drag, baseline = raw["drag"], raw["design_baseline"]
     rotor, materials, cold_support = raw["rotor"], raw["materials"], raw["cold_support"]
-    bearing, turbine = raw["bearing"], raw["turbine"]
+    bearing, turbine, exhaust = raw["bearing"], raw["turbine"], raw["exhaust"]
     return Assumptions(
         bore_diameter_mm=geometry["bore_diameter_mm"],
         tilt_angle_deg=geometry["tilt_angle_deg"],
@@ -88,6 +90,8 @@ def load_assumptions(path):
         target_spin_rate_hz=drive["target_spin_rate_hz"],
         discharge_coefficient=drive["discharge_coefficient"],
         turbine_efficiency=drive["turbine_efficiency"],
+        exhaust_path=exhaust["path"],
+        ducted_back_pressure_bar=exhaust["ducted_back_pressure_bar"],
         turbine=turbine["type"],
         turbines={
             FLUTED_CAP: FlutedCap(),

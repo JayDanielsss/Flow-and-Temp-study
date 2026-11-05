@@ -39,6 +39,12 @@ target_spin_rate_hz = 1000.0
 discharge_coefficient = 0.8    # placeholder, no source yet
 turbine_efficiency = 1.0       # placeholder: ideal Euler torque, losses not yet included
 
+[exhaust]
+# Exhaust Path: "vented" (into the probe space; Back Pressure is the environment pressure)
+# or "ducted" (out through a return line at the Back Pressure below)
+path = "ducted"
+ducted_back_pressure_bar = 0.05  # placeholder, absolute, at the turbine exit
+
 [turbine]
 # Turbine type: "fluted_cap" or "radial_inflow"
 type = "fluted_cap"

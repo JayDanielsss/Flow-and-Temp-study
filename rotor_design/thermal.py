@@ -93,6 +93,7 @@ class RotorThermal:
     breakdown_w: dict
     cold_support_heat_out_w: float   # heat crossing the Cold Support gap to the Bath
     pivot_heat_out_w: float          # heat conducted through the lower pivot contact to the Bath
+    turbine_cap_heat_in_w: float     # heat conducted into the body from the Turbine Cap
 
 
 def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample_length_m,
@@ -101,7 +102,7 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
                   vapour_pressure_pa, gap_m, accommodation, emissivity, windage_heat_per_length_w_m,
                   sample_zone_delta_t_k, gap_heat_transfer_coefficient, cold_support_gap_m=None,
                   cold_support_shear_heat_w=0.0, bearing_friction_heat_w=0.0, bearing_gas_heat_w=0.0,
-                  pivot_conductance=None):
+                  pivot_conductance=None, vented_gas_temperature_k=None):
     """Temperature along the Rotor body below the Turbine Cap, and the Sample Zone heat budget.
 
     Layout from z = 0: solid Bottom Cap, then the Sample inside the tube, then empty bore
@@ -112,6 +113,9 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     Support at Bath temperature and receives cold_support_shear_heat_w from the gap shear.
     The lower Bearing sits at the Bottom Cap: its friction heat and warm-gas heat enter there,
     and pivot_conductance(T) (W/K), when set, conducts from there to the Bath in parallel.
+    With vented_gas_temperature_k set, Vented Drive Gas at that temperature washes the whole
+    body (an upper bound) and convects onto it through the same gap coefficient, in parallel
+    with Vapour Cooling to the Stator.
     """
     r_o = outer_radius_m
     r_i = r_o - wall_m
@@ -137,15 +141,26 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
             return k * np.pi * r_o**2
         return k * annulus + (sample_conductivity_w_m_k * sample_area if in_sample(z) else 0.0)
 
+    if vented_gas_temperature_k is None:
+        vented_hp = 0.0
+    else:
+        # Film taken at a fixed temperature so the gas exchange stays linear in T.
+        vented_hp = gap_heat_transfer_coefficient((vented_gas_temperature_k + bath_temperature_k) / 2.0,
+                                                  vapour_pressure_pa, gap_m, accommodation) * perimeter
+    # Exchange with the vented gas, vented_hp (T_gas - T), split into a cooling term to the
+    # Stator temperature and a fixed source, so the fin keeps one sink.
+    vented_source = 0.0 if vented_gas_temperature_k is None else (
+        vented_hp * (vented_gas_temperature_k - stator_temperature_k))
+
     def cooling(z, t):
         t_film = (t + stator_temperature_k) / 2.0
         h_gas = gap_heat_transfer_coefficient(t_film, vapour_pressure_pa, gap_m, accommodation)
         # Emission linearised about the local temperature.
         h_rad = emissivity * STEFAN_BOLTZMANN * (t**2 + stator_temperature_k**2) * (t + stator_temperature_k)
-        return (h_gas + h_rad) * perimeter
+        return (h_gas + h_rad) * perimeter + vented_hp
 
     def sources(z):
-        return (windage_heat_per_length_w_m + radiation_in_per_area * perimeter
+        return (windage_heat_per_length_w_m + radiation_in_per_area * perimeter + vented_source
                 + (internal_per_length if in_sample(z) else 0.0))
 
     if cold_support_gap_m is None:
@@ -200,11 +215,13 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
         else:
             delivered, conducted_in = dict.fromkeys(point_heat_w, 0.0), shed
     sample_mask = np.array([in_sample(zi) for zi in z])
+    vented_in = float(np.sum(vented_hp * (vented_gas_temperature_k - t) * zone_cell)) if vented_hp else 0.0
     breakdown = {
         "turbine_cap_conduction": conducted_in,
         "windage": float(windage_heat_per_length_w_m * np.sum(zone_cell)),
         "bearing_friction": float(delivered["bearing_friction"]),
-        "convection": float(delivered["convection"]),   # bearing gas warmer than the Rotor
+        # Bearing gas warmer than the Rotor, and Vented Drive Gas.
+        "convection": float(delivered["convection"]) + vented_in,
         "radiation": float(radiation_in_per_area * perimeter * np.sum(zone_cell)),
         "internal_load": float(internal_per_length * np.sum(zone_cell * sample_mask)),
         "cold_support_shear": float(delivered["cold_support_shear"]),
@@ -215,7 +232,7 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     hottest = float(np.max(t[sample_mask])) + radial_rise if sample_mask.any() else float("nan")
     tip_rise = t[0] - bath_temperature_k
     return RotorThermal(z, t, zone, hottest, float(sum(breakdown.values())), breakdown,
-                        float(cold_support(t[0]) * tip_rise), float(pivot(t[0]) * tip_rise))
+                        float(cold_support(t[0]) * tip_rise), float(pivot(t[0]) * tip_rise), fin.base_heat_w)
 
 
 def _longest_cold_stretch(z, t, limit):
