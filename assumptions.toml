@@ -17,20 +17,23 @@ nozzle_angles_deg = [0.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0]
 [study]
 # The full study: every allowed Configuration, each over the full factorial of the grid below.
 # Grid keys are Design fields; a field left out takes its value from this file. Rotor diameter
-# is the largest the Probe Bore allows, and Supply Pressure is the one that reaches the Target
-# Spin Rate, so neither is swept. cold_support_gap_mm applies only with a Cold Support,
+# is swept as rotor_diameter_mm, or as rotor_diameter_fraction of the largest the Probe Bore
+# allows (not both; left out, it is that largest); diameters above the bore limit for a Design's
+# Rotor Length and Bearing type are skipped. Supply Pressure is the one that reaches the Target
+# Spin Rate, so it is not swept. cold_support_gap_mm applies only with a Cold Support,
 # hub_exit_diameter_mm only to a Radial-Inflow Turbine, back_pressure_bar only when Ducted.
 # Sample lengths that do not fit inside the Rotor body are skipped.
 top_designs = 10               # Designs shown in the Sample Heat Load breakdown plot
 constraint_map_x = "rotor_length_mm"
-constraint_map_y = "nozzle_throat_mm"
+constraint_map_y = "rotor_diameter_mm"
 
 [study.grid]
 rotor_length_mm = [8.0, 11.0, 14.0, 17.0, 20.0]
+rotor_diameter_mm = [3.0, 5.0, 7.0]
 wall_thickness_mm = [0.3, 0.8]
 nozzle_count = [2, 4, 8]
 nozzle_throat_mm = [0.1, 0.3, 0.5]
-nozzle_angle_deg = [10.0, 30.0]
+nozzle_angle_deg = [20.0]      # one angle keeps the grid size; the Nozzle sweep covers angle
 drive_gas_temperature_k = [10.0]
 sample_length_mm = [5.0, 8.0]
 cold_support_gap_mm = [0.01, 0.1]
