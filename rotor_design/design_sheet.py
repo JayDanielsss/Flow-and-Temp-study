@@ -652,8 +652,11 @@ def _inward(value, up):
     written edge is itself feasible."""
     if not isinstance(value, float) or not math.isfinite(value) or value == 0.0:
         return value
-    scale = 10.0 ** (math.floor(math.log10(abs(value))) - 5)
-    return (math.ceil(value / scale) if up else math.floor(value / scale)) * scale
+    rounded = float(f"{value:.6g}")
+    if (up and rounded < value) or (not up and rounded > value):
+        step = 10.0 ** (math.floor(math.log10(abs(value))) - 5)
+        rounded = float(f"{rounded + (step if up else -step):.6g}")
+    return rounded
 
 
 def _cells(row):
@@ -728,7 +731,7 @@ def plot_temperature(sheet, path):
         i = int(np.argmax(np.where(in_sample, t, -np.inf)))
         ax.plot(z[i], t[i], "o", color=SERIES, markersize=8, markeredgecolor=SURFACE, markeredgewidth=2, zorder=4)
         ax.annotate(f"hottest Sample point {r.sample_hottest_temperature_k:.4f} K", (z[i], t[i]),
-                    textcoords="offset points", xytext=(8, -14), color=INK, fontsize=8)
+                    textcoords="offset points", xytext=(10, 8), color=INK, fontsize=8)
     ax.axhline(limit, color=INK_SECONDARY, linewidth=1, linestyle=":")
     ax.annotate(f"Sample Limit Temperature {limit:g} K", (0.99, limit), xycoords=("axes fraction", "data"),
                 textcoords="offset points", xytext=(0, 4), ha="right", color=INK_SECONDARY, fontsize=8)
@@ -736,7 +739,7 @@ def plot_temperature(sheet, path):
                 color=INK, fontsize=9)
     ax.annotate("Bottom\nCap", (bottom / 2, 0.97), xycoords=("data", "axes fraction"), ha="center", va="top",
                 color=INK_SECONDARY, fontsize=7)
-    ax.annotate(f"Turbine Cap\n({r.drive_gas_temperature_k:g} K) above", (z[-1], 0.03),
+    ax.annotate(f"Turbine Cap ({r.drive_gas_temperature_k:g} K)\nat the right end", (z[-1], 0.03),
                 xycoords=("data", "axes fraction"), ha="right", va="bottom", color=INK_SECONDARY, fontsize=8)
     ax.set_xlim(0.0, z[-1])
     ax.set_ylim(min(t.min(), limit) - 0.02, min(t.max(), limit + 0.3) + 0.02)
