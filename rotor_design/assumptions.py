@@ -71,6 +71,7 @@ class Assumptions:
     uncertainty_percentiles: tuple  # (lower, upper) band edges, in percent
     uncertainty_inputs: dict        # uncertain input -> (distribution, low, high)
     model_form_knobs: dict          # Reference Case mechanism -> the input its Model-Form Error spreads
+    uncertainty_physical_range: dict  # uncertain input or knob -> (low, high], its physical range
     reference_cases_dir: Path
 
 
@@ -159,5 +160,6 @@ def load_assumptions(path):
         uncertainty_inputs={name: (d["distribution"], d["low"], d["high"])
                             for name, d in uncertainty["inputs"].items()},
         model_form_knobs=dict(uncertainty["model_form_knobs"]),
+        uncertainty_physical_range={name: tuple(r) for name, r in uncertainty["physical_range"].items()},
         reference_cases_dir=Path(path).resolve().parent / uncertainty["reference_cases"],
     )

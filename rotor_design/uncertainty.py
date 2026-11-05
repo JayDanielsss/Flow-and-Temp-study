@@ -1,11 +1,14 @@
-"""Monte Carlo over the Input Uncertainty, with the Model-Form Error spread on top.
+"""Monte Carlo over the Input Uncertainty, with the Model-Form Error on top.
 
 Each sample is one copy of the assumptions: every uncertain input drawn from its
-distribution, then the knob of each Reference Case mechanism multiplied by (1 + e), e
-normal with that mechanism's rms Model-Form Error as its standard deviation. The spread
-is centred on the model as built; it widens the bands without correcting any bias.
-Benchmark Case comparisons are not used here: a whole-system error would double count
-the mechanism errors it already contains.
+distribution, then the knob of each Reference Case mechanism multiplied by a lognormal
+factor exp(b + s z), z standard normal. Over the mechanism's comparisons, b is the mean of
+ln(measured / predicted), the signed bias, so the factor's median corrects the model to the
+measurements; s is the standard deviation of the same logs about b, the residual, so only
+the scatter the bias leaves widens the bands. A factor is always positive, and the knob is
+then capped at the top of its physical range (a discharge coefficient at 1). Benchmark Case
+comparisons are not used here: a whole-system error would double count the mechanism
+errors it already contains.
 
 Every Design is evaluated on the same samples, so Designs are compared under the same draws.
 Percentiles take actual sample values (inverted CDF), so a band edge can be inf when
@@ -27,9 +30,6 @@ BANDED = ("required_supply_pressure_bar", "required_mass_flow_kg_s", "sample_hea
 # Uncertain inputs held in a Bearing model rather than on the assumptions themselves.
 _BEARING_INPUTS = {"mechanical_friction_coefficient": (MECHANICAL, "friction_coefficient"),
                    "pivot_friction_coefficient": (TWO_CENTER_PIVOT, "friction_coefficient")}
-# Physical bounds a spread knob is clipped to.
-_UPPER_BOUND = {"accommodation_coefficient": 1.0}
-_LOWER_BOUND = 1e-6
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,21 @@ class MechanismError:
     compared: int
     mean_error: float
     rms_error: float
+    bias_correction: float  # median of the knob's factor: geometric mean of measured / predicted
+    residual_spread: float  # log standard deviation of the factor, about the bias
+
+
+def _bias_and_residual(errors):
+    """Bias correction and residual spread from Model-Form Errors (predicted - measured) / measured.
+
+    With one comparison the bias cannot be told from scatter, so the whole error is also kept
+    as spread.
+    """
+    logs = [-math.log1p(e) for e in errors]
+    bias = sum(logs) / len(logs)
+    if len(logs) == 1:
+        return math.exp(bias), abs(bias)
+    return math.exp(bias), math.sqrt(sum((x - bias) ** 2 for x in logs) / (len(logs) - 1))
 
 
 def mechanism_errors(assumptions):
@@ -52,8 +67,10 @@ def mechanism_errors(assumptions):
             continue
         if mechanism not in a.model_form_knobs:
             raise ValueError(f"Reference Case mechanism {mechanism!r} has no knob in [uncertainty.model_form_knobs]")
+        bias, residual = _bias_and_residual([c.model_form_error for c in comparisons
+                                             if c.quantity == q.quantity and not c.skipped])
         errors.append(MechanismError(mechanism, a.model_form_knobs[mechanism], q.compared, q.mean_error,
-                                     q.rms_error))
+                                     q.rms_error, bias, residual))
     return errors
 
 
@@ -81,9 +98,25 @@ def _draw(rng, distribution, low, high):
     raise ValueError(f"Unknown distribution {distribution!r}; expected 'uniform' or 'log_uniform'")
 
 
-def sample_assumptions(assumptions, errors):
-    """The Monte Carlo samples: one copy of the assumptions per sample, from the fixed seed."""
+def _check_physical_ranges(assumptions, errors):
     a = assumptions
+    for name in [*a.uncertainty_inputs, *(e.knob for e in errors)]:
+        if name not in a.uncertainty_physical_range:
+            raise ValueError(f"Uncertain input {name!r} has no range in [uncertainty.physical_range]")
+    for name, (_, low, high) in a.uncertainty_inputs.items():
+        physical_low, physical_high = a.uncertainty_physical_range[name]
+        if not physical_low < low <= high <= physical_high:
+            raise ValueError(f"Uncertain input {name!r} range [{low}, {high}] leaves its physical range "
+                             f"({physical_low}, {physical_high}]")
+
+
+def sample_assumptions(assumptions, errors):
+    """The Monte Carlo samples: one copy of the assumptions per sample, from the fixed seed.
+
+    Every sampled input and knob lies in its physical range (low, high].
+    """
+    a = assumptions
+    _check_physical_ranges(a, errors)
     rng = np.random.default_rng(a.uncertainty_seed)
     samples = []
     for _ in range(a.uncertainty_samples):
@@ -91,8 +124,9 @@ def sample_assumptions(assumptions, errors):
         for name, (distribution, low, high) in a.uncertainty_inputs.items():
             s = _set(s, name, _draw(rng, distribution, low, high))
         for e in errors:
-            value = _get(s, e.knob) * (1.0 + e.rms_error * rng.standard_normal())
-            s = _set(s, e.knob, min(max(value, _LOWER_BOUND), _UPPER_BOUND.get(e.knob, math.inf)))
+            value = _get(s, e.knob) * e.bias_correction * math.exp(e.residual_spread * rng.standard_normal())
+            low, high = a.uncertainty_physical_range[e.knob]
+            s = _set(s, e.knob, min(max(value, math.nextafter(low, math.inf)), high))
         samples.append(s)
     return samples
 
