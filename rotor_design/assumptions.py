@@ -24,6 +24,8 @@ class Assumptions:
     bottom_cap_thickness_mm: float
     environment_temperature_k: float
     environment_pressure_torr: float
+    environment_gas: str
+    drive_gas: str
     drive_gas_temperature_k: float
     max_supply_pressure_bar: float
     target_spin_rate_hz: float
@@ -94,6 +96,8 @@ def load_assumptions(path):
         bottom_cap_thickness_mm=rotor["bottom_cap_thickness_mm"],
         environment_temperature_k=environment["temperature_k"],
         environment_pressure_torr=environment["pressure_torr"],
+        environment_gas=environment["gas"],
+        drive_gas=drive["gas"],
         drive_gas_temperature_k=drive["drive_gas_temperature_k"],
         max_supply_pressure_bar=drive["max_supply_pressure_bar"],
         target_spin_rate_hz=drive["target_spin_rate_hz"],

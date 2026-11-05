@@ -50,10 +50,12 @@ cold_support_plate_mm = 2.0
 probe_wall_clearance_mm = 0.5
 
 [environment]
+gas = "helium"                 # "helium", "nitrogen" or "air": the gas the Rotor turns in
 temperature_k = 1.2            # Bath vapour around the Rotor
 pressure_torr = 0.2            # saturated vapour pressure of the Bath
 
 [drive]
+gas = "helium"                 # Drive Gas, also fed to the gas Bearings
 drive_gas_temperature_k = 10.0
 max_supply_pressure_bar = 3.77 # absolute; 40 psig at the room-temperature regulator
 target_spin_rate_hz = 1000.0

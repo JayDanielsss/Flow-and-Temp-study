@@ -9,7 +9,7 @@ heat at the Bottom Cap station enters the Rotor there. Bearings are heat sources
 import math
 from dataclasses import dataclass
 
-from rotor_design.gas import GAMMA, R_HELIUM, gap_heat_transfer_coefficient, vapour_viscosity
+from rotor_design.gas import HELIUM, gap_heat_transfer_coefficient, vapour_viscosity
 from rotor_design.materials import ZIRCONIA
 
 GAS = "gas"
@@ -18,7 +18,6 @@ TWO_CENTER_PIVOT = "two_center_pivot"
 BEARING_TYPES = (GAS, MECHANICAL, TWO_CENTER_PIVOT)
 
 _STATIONS = 2
-CP_HELIUM = GAMMA / (GAMMA - 1.0) * R_HELIUM  # ideal monatomic gas, J/(kg K)
 
 MECHANICAL_WARNING = ("Mechanical bearing: unlubricated operation at 1.2 K and 60,000 rpm is untested; "
                       "friction coefficient and life are placeholders")
@@ -37,7 +36,7 @@ class BearingPerformance:
 
 @dataclass(frozen=True)
 class GasBearing:
-    """Externally pressurised gas journals with Petroff friction in the film."""
+    """Externally pressurised gas journals with Petroff friction in the film; gas is the bearing gas."""
 
     journal_length_mm: float
     clearance_mm: float
@@ -48,11 +47,11 @@ class GasBearing:
     radial_space_mm: float
 
     def performance(self, *, rotor_radius_m, rotor_weight_n, spin_rate_hz, bath_temperature_k,
-                    ambient_pressure_pa, accommodation):
+                    ambient_pressure_pa, accommodation, gas=HELIUM):
         omega = 2.0 * math.pi * spin_rate_hz
         length, clearance = self.journal_length_mm / 1e3, self.clearance_mm / 1e3
         # Petroff: tau = mu omega R / c over 2 pi R L, at radius R.
-        torque = 2.0 * math.pi * vapour_viscosity(self.gas_temperature_k) * rotor_radius_m**3 * length * omega / clearance
+        torque = 2.0 * math.pi * vapour_viscosity(self.gas_temperature_k, gas) * rotor_radius_m**3 * length * omega / clearance
         supply_pa = self.supply_pressure_bar * 1e5
         stiffness = (self.stiffness_coefficient * (supply_pa - ambient_pressure_pa) * length
                      * 2.0 * rotor_radius_m / clearance)
@@ -60,14 +59,15 @@ class GasBearing:
             friction_torque_n_m=_STATIONS * torque,
             bottom_friction_heat_w=torque * omega,
             bottom_gas_heat_w=self._gas_heat(rotor_radius_m, length, clearance, bath_temperature_k,
-                                             (supply_pa + ambient_pressure_pa) / 2.0, accommodation),
+                                             (supply_pa + ambient_pressure_pa) / 2.0, accommodation, gas),
             stiffness_n_m=_STATIONS * stiffness,
             radial_space_mm=self.radial_space_mm,
             contact_radius_m=math.nan,
             warning="",
         )
 
-    def _gas_heat(self, radius_m, length_m, clearance_m, rotor_temperature_k, film_pressure_pa, accommodation):
+    def _gas_heat(self, radius_m, length_m, clearance_m, rotor_temperature_k, film_pressure_pa, accommodation,
+                  gas):
         """Heat one journal's gas gives the Rotor: m cp dT (1 - exp(-NTU)), zero if the gas is not warmer.
 
         The Rotor is taken at the Bath temperature, the coldest it can be (upper bound).
@@ -75,9 +75,9 @@ class GasBearing:
         excess = self.gas_temperature_k - rotor_temperature_k
         if excess <= 0.0 or self.mass_flow_kg_s <= 0.0:
             return 0.0
-        capacity = self.mass_flow_kg_s / _STATIONS * CP_HELIUM
+        capacity = self.mass_flow_kg_s / _STATIONS * gas.cp_dilute
         h = gap_heat_transfer_coefficient((self.gas_temperature_k + rotor_temperature_k) / 2.0,
-                                          film_pressure_pa, clearance_m, accommodation)
+                                          film_pressure_pa, clearance_m, accommodation, gas)
         ntu = h * 2.0 * math.pi * radius_m * length_m / capacity
         return capacity * excess * -math.expm1(-ntu)
 
@@ -92,7 +92,7 @@ class MechanicalBearing:
     radial_space_mm: float
 
     def performance(self, *, rotor_radius_m, rotor_weight_n, spin_rate_hz, bath_temperature_k,
-                    ambient_pressure_pa, accommodation):
+                    ambient_pressure_pa, accommodation, gas=HELIUM):
         omega = 2.0 * math.pi * spin_rate_hz
         load = self.preload_n + rotor_weight_n / _STATIONS
         # Ball pitch circle in the middle of the radial space.
@@ -123,7 +123,7 @@ class TwoCenterPivots:
     radial_space_mm = 0.0          # pivots sit on the axis
 
     def performance(self, *, rotor_radius_m, rotor_weight_n, spin_rate_hz, bath_temperature_k,
-                    ambient_pressure_pa, accommodation):
+                    ambient_pressure_pa, accommodation, gas=HELIUM):
         omega = 2.0 * math.pi * spin_rate_hz
         load = self.preload_n + rotor_weight_n / _STATIONS
         e_star = ZIRCONIA.youngs_modulus_pa / (2.0 * (1.0 - ZIRCONIA.poissons_ratio**2))

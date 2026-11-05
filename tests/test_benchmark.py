@@ -94,7 +94,8 @@ def test_complete_case_is_predicted_through_evaluate(tmp_path, assumptions):
 
     direct = evaluate(
         Design(rotor_length_mm=20.0, rotor_diameter_mm=4.0, wall_thickness_mm=0.5, nozzle_count=4,
-               nozzle_throat_mm=0.3, nozzle_angle_deg=20.0, drive_gas_temperature_k=45.0, bearing="gas",
+               nozzle_throat_mm=0.3, nozzle_angle_deg=20.0, drive_gas="helium", drive_gas_temperature_k=45.0,
+               bearing="gas",
                pivot_to_bath=False, turbine="fluted_cap", exhaust_path=DUCTED, back_pressure_bar=1.0),
         replace(assumptions, target_spin_rate_hz=8000.0, environment_temperature_k=45.0,
                 environment_pressure_torr=PA_PER_BAR / PA_PER_TORR, stator_temperature_k=45.0))
@@ -122,7 +123,7 @@ def test_point_without_spin_rate_is_skipped(tmp_path, assumptions):
 
 
 @pytest.mark.parametrize("field, value, reason", [
-    ("drive_gas", "air", "helium only"),
+    ("drive_gas", "argon", "helium, nitrogen, air only"),
     ("rotor_material", "sapphire", "zirconia only"),
     ("turbine", "surface grooves", "no model Turbine type"),
     ("bearing", "single drive jet", "no model Bearing type"),

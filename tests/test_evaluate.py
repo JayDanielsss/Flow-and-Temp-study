@@ -464,3 +464,28 @@ def test_sample_volume_is_the_bore_cylinder_the_sample_fills(assumptions):
     r = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=6.0, wall_thickness_mm=1.0,
                         sample_length_mm=5.0), assumptions)
     assert r.sample_volume_mm3 == pytest.approx(62.832, abs=1e-3)
+
+
+def test_gases_default_to_helium_and_are_reported(assumptions):
+    results = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert (results.drive_gas, results.environment_gas) == ("helium", "helium")
+
+
+def test_unknown_gas_is_rejected(assumptions):
+    with pytest.raises(ValueError, match="Unknown gas"):
+        evaluate(Design(rotor_length_mm=20.0, drive_gas="argon"), assumptions)
+
+
+def test_warm_nitrogen_drive_needs_more_flow_than_helium_at_the_same_conditions(assumptions):
+    # Room-temperature Rotor in nitrogen, Ducted to 1 bar. At the same torque a jet of the
+    # heavier gas is slower (v ~ sqrt(R T)), so it needs more mass flow.
+    warm = replace(assumptions, environment_temperature_k=300.0, stator_temperature_k=300.0,
+                   environment_pressure_torr=760.0, environment_gas="nitrogen",
+                   bearing="mechanical")
+    design = Design(rotor_length_mm=20.0, drive_gas_temperature_k=300.0, exhaust_path=DUCTED,
+                    back_pressure_bar=1.0)
+    nitrogen = evaluate(replace(design, drive_gas="nitrogen"), warm)
+    helium = evaluate(replace(design, drive_gas="helium"), warm)
+    assert nitrogen.drive_gas == "nitrogen" and nitrogen.environment_gas == "nitrogen"
+    assert nitrogen.drag_torque_n_m == helium.drag_torque_n_m  # same environment gas
+    assert nitrogen.required_mass_flow_kg_s > helium.required_mass_flow_kg_s

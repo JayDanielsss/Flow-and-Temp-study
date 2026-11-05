@@ -2,10 +2,11 @@
 
 import math
 from dataclasses import dataclass, replace
+from functools import partial
 
 from rotor_design.bearing import BEARING_TYPES, GAS, TWO_CENTER_PIVOT, pivot_contact_conductance
 from rotor_design.drag import cold_support_shear_torque, windage_torque
-from rotor_design.gas import R_HELIUM, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
+from rotor_design.gas import GASES, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
 from rotor_design.nozzle import nozzle_flow
@@ -67,6 +68,7 @@ class Design:
     nozzle_count: int | None = None
     nozzle_throat_mm: float | None = None
     nozzle_angle_deg: float | None = None
+    drive_gas: str | None = None                # also feeds the gas Bearings
     drive_gas_temperature_k: float | None = None
     wall_thickness_mm: float | None = None
     sample_length_mm: float | None = None
@@ -95,6 +97,8 @@ class Results:
     nozzle_count: int
     nozzle_throat_mm: float
     nozzle_angle_deg: float
+    drive_gas: str
+    environment_gas: str            # the gas the Rotor turns in
     drive_gas_temperature_k: float
     spin_rate_hz: float
     exhaust_path: str
@@ -189,6 +193,11 @@ def evaluate(design, assumptions):
     throat_mm = _or(design.nozzle_throat_mm, a.baseline_nozzle_throat_mm)
     angle_deg = _or(design.nozzle_angle_deg, a.baseline_nozzle_angle_deg)
     gas_t = _or(design.drive_gas_temperature_k, a.drive_gas_temperature_k)
+    drive_gas_name = _or(design.drive_gas, a.drive_gas)
+    for name in (drive_gas_name, a.environment_gas):
+        if name not in GASES:
+            raise ValueError(f"Unknown gas {name!r}; expected one of {tuple(GASES)}")
+    drive_gas, environment_gas = GASES[drive_gas_name], GASES[a.environment_gas]
     spin = a.target_spin_rate_hz
     exhaust_path = _or(design.exhaust_path, a.exhaust_path)
     if exhaust_path not in EXHAUST_PATHS:
@@ -205,11 +214,13 @@ def evaluate(design, assumptions):
     if cooling_path not in COOLING_PATHS:
         raise ValueError(f"Unknown cooling path {cooling_path!r}; expected one of {COOLING_PATHS}")
     windage = windage_torque(radius_m, design.rotor_length_mm / 1e3, a.rotor_stator_gap_mm / 1e3, spin,
-                             a.environment_temperature_k, vapour_p, a.accommodation_coefficient)
+                             a.environment_temperature_k, vapour_p, a.accommodation_coefficient,
+                             environment_gas)
     if cooling_path == COLD_SUPPORT:
         cold_gap_mm = _or(design.cold_support_gap_mm, a.cold_support_gap_mm)
         cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, a.environment_temperature_k,
-                                                vapour_p, a.accommodation_coefficient).torque_n_m
+                                                vapour_p, a.accommodation_coefficient,
+                                                environment_gas).torque_n_m
     else:
         cold_gap_mm, cold_torque = math.nan, 0.0
     wall_mm = _or(design.wall_thickness_mm, a.baseline_wall_thickness_mm)
@@ -223,11 +234,12 @@ def evaluate(design, assumptions):
         bath_temperature_k=a.environment_temperature_k,
         ambient_pressure_pa=vapour_p,
         accommodation=a.accommodation_coefficient,
+        gas=drive_gas,
     )
     drag_torque = windage.torque_n_m + cold_torque + bearing_load.friction_torque_n_m
 
     def drive(supply_p):
-        flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient)
+        flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient, drive_gas)
         torque = nozzle_count * turbine_model.torque(flow.mass_flow_kg_s, flow.jet_velocity_m_s, angle_deg,
                                                      radius_m, spin, a.turbine_efficiency)
         return flow, torque
@@ -266,7 +278,8 @@ def evaluate(design, assumptions):
         emissivity=a.rotor_emissivity,
         windage_heat_per_length_w_m=windage_heat,
         sample_zone_delta_t_k=a.sample_zone_delta_t_k,
-        gap_heat_transfer_coefficient=gap_heat_transfer_coefficient,
+        # The Rotor's surroundings, Vented Drive Gas included, take the environment gas.
+        gap_heat_transfer_coefficient=partial(gap_heat_transfer_coefficient, gas=environment_gas),
         cold_support_gap_m=None if cooling_path == VAPOUR_ONLY else cold_gap_mm / 1e3,
         cold_support_shear_heat_w=cold_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction,
         bearing_friction_heat_w=bearing_load.bottom_friction_heat_w,
@@ -286,11 +299,12 @@ def evaluate(design, assumptions):
         # The vented gas is cooled to Bath vapour; this also covers its convection onto the
         # Rotor and the Turbine Cap conduction, which it supplies.
         if math.isfinite(mass_flow):
-            h0, _ = stagnation_state(gas_t, supply_p)
-            exhaust_heat = mass_flow * (h0 - vapour_enthalpy(a.environment_temperature_k, vapour_p)) - drag_power
+            h0, _ = stagnation_state(gas_t, supply_p, drive_gas)
+            exhaust_heat = (mass_flow * (h0 - vapour_enthalpy(a.environment_temperature_k, vapour_p, drive_gas))
+                            - drag_power)
         else:
             exhaust_heat = math.inf
-        pumping_speed = mass_flow * R_HELIUM * a.environment_temperature_k / vapour_p
+        pumping_speed = mass_flow * drive_gas.specific_gas_constant * a.environment_temperature_k / vapour_p
         bath_load = sources_w + exhaust_heat
     else:
         exhaust_heat, pumping_speed = 0.0, math.nan
@@ -340,6 +354,8 @@ def evaluate(design, assumptions):
         nozzle_count=nozzle_count,
         nozzle_throat_mm=throat_mm,
         nozzle_angle_deg=angle_deg,
+        drive_gas=drive_gas.name,
+        environment_gas=environment_gas.name,
         drive_gas_temperature_k=gas_t,
         spin_rate_hz=spin,
         exhaust_path=exhaust_path,

@@ -10,7 +10,8 @@ case's environment in place of the Bath. Model details no source reports (cap
 heights, gaps, Bearing film data, discharge coefficient, turbine efficiency, Sample
 fill) keep their values from the assumptions file: they are part of the model whose
 Model-Form Error is being measured. The Turbine exit is taken as Ducted at the
-case's Back Pressure, and the Stator at the environment temperature.
+case's Back Pressure, the Stator at the environment temperature, and the Rotor as
+turning in its own Drive Gas.
 """
 
 import math
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from rotor_design.bearing import BEARING_TYPES
 from rotor_design.evaluate import DUCTED, PA_PER_BAR, PA_PER_TORR, Design, evaluate
+from rotor_design.gas import GASES
 from rotor_design.turbine import FLUTED_CAP, TURBINE_TYPES
 
 # How each value was read. S (simulation) and 2nd (second-hand) are never validation truth.
@@ -28,7 +30,6 @@ REJECTED_FLAGS = ("S", "2nd")
 # Published Turbine types and the model Turbine type that stands in for them.
 # A Pelton cap takes rim jets on blades at the cap rim and exhausts around the rim.
 MODELLED_TURBINE = {FLUTED_CAP: FLUTED_CAP, "pelton": FLUTED_CAP}
-MODELLED_GAS = "helium"
 MODELLED_MATERIAL = "zirconia"
 
 # Inputs every case file lists, filled or empty.
@@ -149,8 +150,8 @@ def _unmodelled(inputs):
     """Why the model cannot describe this system at all; empty if it can."""
     gas, material = inputs["drive_gas"].value, inputs["rotor_material"].value
     turbine, bearing = inputs["turbine"].value, inputs["bearing"].value
-    if gas is not None and gas != MODELLED_GAS:
-        return f"Drive Gas {gas!r}: the model handles {MODELLED_GAS} only"
+    if gas is not None and gas not in GASES:
+        return f"Drive Gas {gas!r}: the model handles {', '.join(GASES)} only"
     if material is not None and material != MODELLED_MATERIAL:
         return f"Rotor material {material!r}: the model handles {MODELLED_MATERIAL} only"
     if turbine is not None and turbine not in MODELLED_TURBINE:
@@ -170,6 +171,7 @@ def _design_and_assumptions(inputs, assumptions):
         nozzle_count=v["nozzle_count"],
         nozzle_throat_mm=v["nozzle_throat_mm"],
         nozzle_angle_deg=v["nozzle_angle_deg"],
+        drive_gas=v["drive_gas"],
         drive_gas_temperature_k=v["drive_gas_temperature_k"],
         bearing=v["bearing"],
         pivot_to_bath=False,
@@ -182,6 +184,7 @@ def _design_and_assumptions(inputs, assumptions):
         assumptions,
         target_spin_rate_hz=v["spin_rate_hz"],
         environment_temperature_k=environment_k,
+        environment_gas=v["drive_gas"],
         environment_pressure_torr=v["environment_pressure_bar"] * PA_PER_BAR / PA_PER_TORR,
         stator_temperature_k=environment_k,
         max_rotor_length_mm=max(assumptions.max_rotor_length_mm, v["rotor_length_mm"]),
