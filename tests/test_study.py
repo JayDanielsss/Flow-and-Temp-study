@@ -23,3 +23,18 @@ def test_study_on_tiny_grid_writes_csv_and_plot(tmp_path):
     assert float(rows[0]["max_rotor_diameter_mm"]) > float(rows[1]["max_rotor_diameter_mm"])
 
     assert (tmp_path / "max_rotor_diameter_vs_rotor_length.png").stat().st_size > 0
+
+
+def test_study_writes_required_flow_versus_nozzle_geometry(tmp_path):
+    sweeps = {"nozzle_count": [2, 4], "nozzle_throat_mm": [0.2, 0.3], "nozzle_angle_deg": [10.0, 20.0]}
+    run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps=sweeps)
+
+    with open(tmp_path / "nozzle_geometry_sweep.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 6
+    assert {r["swept_variable"] for r in rows} == set(sweeps)
+    for r in rows:
+        assert float(r["required_mass_flow_kg_s"]) > 0.0
+        assert float(r["spin_rate_hz"]) == 1000.0
+
+    assert (tmp_path / "required_flow_vs_nozzle_geometry.png").stat().st_size > 0

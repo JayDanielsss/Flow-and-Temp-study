@@ -9,6 +9,10 @@ max_rotor_length_mm = 20.0     # Rotor Length limit, turbine included
 [sweep]
 rotor_length_min_mm = 5.0      # swept from here up to max_rotor_length_mm
 rotor_length_step_mm = 0.5
+# Nozzle geometry swept one at a time about the baseline, at max_rotor_length_mm
+nozzle_counts = [1, 2, 3, 4, 6, 8, 12]
+nozzle_throats_mm = [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0]
+nozzle_angles_deg = [0.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0]
 
 [stator_allowance]
 # Radial, each side of the Rotor
@@ -28,6 +32,18 @@ pressure_torr = 0.2            # saturated vapour pressure of the Bath
 drive_gas_temperature_k = 10.0
 max_supply_pressure_bar = 3.77 # absolute; 40 psig at the room-temperature regulator
 target_spin_rate_hz = 1000.0
+discharge_coefficient = 0.8    # placeholder, no source yet
+turbine_efficiency = 1.0       # placeholder: ideal Euler torque, losses not yet included
+
+[drag]
+rotor_stator_gap_mm = 0.1      # placeholder radial gap between Rotor and Stator
+accommodation_coefficient = 1.0 # placeholder: fully diffuse reflection
+
+[design_baseline]
+# Used wherever a Design leaves a value unset
+nozzle_count = 4
+nozzle_throat_mm = 0.3
+nozzle_angle_deg = 20.0        # from the rim tangent
 
 [thermal]
 sample_zone_delta_t_k = 0.1    # Sample Zone: within this of the bath temperature
