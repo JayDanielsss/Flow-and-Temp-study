@@ -61,3 +61,33 @@ def test_oversized_stator_is_ruled_out_by_probe_bore(assumptions):
 def test_rotor_length_above_20mm_is_rejected(assumptions):
     with pytest.raises(ValueError, match="Rotor Length"):
         evaluate(Design(rotor_length_mm=20.5), assumptions)
+
+
+def test_turbine_torque_balances_drag_at_target_spin_rate(assumptions):
+    results = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert results.spin_rate_hz == 1000.0
+    assert results.drag_torque_n_m > 0.0
+    assert results.turbine_torque_n_m == pytest.approx(results.drag_torque_n_m, rel=1e-3)
+    assert results.required_mass_flow_kg_s > 0.0
+    back_pressure_bar = 0.2 * 133.322 / 1e5
+    assert back_pressure_bar < results.required_supply_pressure_bar <= 3.77
+    assert results.feasible
+
+
+def test_nozzle_too_small_to_drive_rotor_is_ruled_out_by_supply_pressure(assumptions):
+    # One 2 um Nozzle passes a few ng/s even when choked at 3.77 bar: far too little torque.
+    design = Design(rotor_length_mm=20.0, nozzle_count=1, nozzle_throat_mm=0.002)
+    results = evaluate(design, assumptions)
+    assert results.fits_bore
+    assert results.required_supply_pressure_bar > 3.77
+    assert not results.feasible
+    assert results.binding_constraint == "Supply Pressure"
+
+
+def test_drive_gas_temperature_defaults_to_10k_and_warmer_gas_needs_less_flow(assumptions):
+    # A warmer supply gives a faster jet, so less mass flow balances the same drag.
+    cold = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    warm = evaluate(Design(rotor_length_mm=20.0, drive_gas_temperature_k=20.0), assumptions)
+    assert cold.drive_gas_temperature_k == 10.0
+    assert warm.drive_gas_temperature_k == 20.0
+    assert warm.required_mass_flow_kg_s < cold.required_mass_flow_kg_s

@@ -3,10 +3,13 @@ name = "rotor_design"
 version = "0.1.0"
 description = "Design-limit calculations for a small gas-driven rotor and turbine"
 requires-python = ">=3.11"
-dependencies = ["numpy", "matplotlib"]
+dependencies = ["numpy", "matplotlib", "CoolProp"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+
+[tool.setuptools]
+packages = ["rotor_design"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
