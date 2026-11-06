@@ -5,11 +5,11 @@ from dataclasses import dataclass, replace
 from functools import partial
 
 from rotor_design.bearing import BEARING_TYPES, GAS, TWO_CENTER_PIVOT, pivot_contact_conductance
-from rotor_design.drag import cold_support_shear_torque, windage_torque
+from rotor_design.drag import cold_support_shear_torque, rotor_windage
 from rotor_design.gas import GASES, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
-from rotor_design.nozzle import nozzle_flow
+from rotor_design.nozzle import ThroatSearchRangeError, nozzle_flow
 from rotor_design.rotordynamics import (first_bending_mode_hz, half_frequency_whirl_threshold_hz,
                                         rigid_body_critical_speeds_hz, rotor_mass_properties)
 from rotor_design.stress import rotating_tube_stress
@@ -20,8 +20,6 @@ from rotor_design.turbine import RADIAL_INFLOW, TURBINE_TYPES
 _FIT_TOLERANCE_MM = 1e-9
 PA_PER_TORR = 133.322
 PA_PER_BAR = 1e5
-# Required Supply Pressure is searched up to this multiple of the limit; beyond it, reported as inf.
-_PRESSURE_SEARCH_CEILING = 10.0
 _PRESSURE_REL_TOLERANCE = 1e-6
 _MARGIN_TOLERANCE = 1e-9
 
@@ -37,6 +35,8 @@ STANDARD_GRAVITY = 9.80665
 # Every constraint, in build order; a Design that breaks several is ruled out by the first.
 CONSTRAINTS = ("Probe Bore", "Supply Pressure", "Stress", "Critical Speed", "Whirl", "Sample Zone",
                "Sample Temperature", "Bath Heat Load")
+# The physics constraints, which name what limits a Design that fits the Probe Bore.
+PHYSICS_CONSTRAINTS = CONSTRAINTS[1:]
 
 
 def is_excluded(bearing, pivot_to_bath):
@@ -59,11 +59,21 @@ def configurations():
     ]
 
 
+def largest_rotor_diameter_mm(rotor_length_mm, bearing, assumptions):
+    """Largest Rotor diameter the Probe Bore allows at this Rotor Length with this Bearing type
+    (None means the assumptions file's)."""
+    a = assumptions
+    radial_space = a.bearings[_or(bearing, a.bearing)].radial_space_mm
+    allowance = replace(a.stator_allowance, bearing_radial_space=radial_space)
+    return max_rotor_diameter(rotor_length_mm, allowance, a.bore_diameter_mm, a.tilt_angle_deg)
+
+
 @dataclass(frozen=True)
 class Design:
     rotor_length_mm: float
-    # None means the largest diameter the Probe Bore allows.
+    # Give at most one of the two; both None means the largest diameter the Probe Bore allows.
     rotor_diameter_mm: float | None = None
+    rotor_diameter_fraction: float | None = None   # of the largest the Probe Bore allows
     # None means the value from the assumptions file.
     nozzle_count: int | None = None
     nozzle_throat_mm: float | None = None
@@ -88,12 +98,14 @@ class Design:
 class Results:
     rotor_length_mm: float
     rotor_diameter_mm: float
+    rotor_diameter_fraction: float  # of the largest the Probe Bore allows
     max_rotor_diameter_mm: float
     stator_length_mm: float
     stator_diameter_mm: float
     projected_width_mm: float
     usable_bore_mm: float
     fits_bore: bool
+    probe_bore_margin: float        # usable bore left over, as a fraction; reported apart from the Binding Constraint
     nozzle_count: int
     nozzle_throat_mm: float
     nozzle_angle_deg: float
@@ -113,8 +125,12 @@ class Results:
     turbine_torque_n_m: float
     turbine_torque_per_flow_n_m_s_kg: float
     drag_torque_n_m: float          # windage, Cold Support gap shear and Bearing friction
-    windage_regime: str
-    knudsen_number: float
+    turbine_cap_windage_torque_n_m: float  # Turbine Cap section, in Drive Gas at the Back Pressure
+    turbine_cap_windage_regime: str
+    turbine_cap_windage_heat_w: float      # into the Turbine Cap, held at Drive Gas temperature; not the body
+    body_windage_torque_n_m: float  # body below the Turbine Cap, in the vapour
+    windage_regime: str             # body section
+    knudsen_number: float           # body section
     wall_thickness_mm: float
     sample_length_mm: float
     sample_conductivity_w_m_k: float
@@ -180,8 +196,14 @@ def evaluate(design, assumptions):
     if turbine == RADIAL_INFLOW and design.hub_exit_diameter_mm is not None:
         turbine_model = replace(turbine_model, hub_exit_diameter_mm=design.hub_exit_diameter_mm)
     allowance = replace(a.stator_allowance, bearing_radial_space=bearing_model.radial_space_mm)
-    largest = max_rotor_diameter(design.rotor_length_mm, allowance, a.bore_diameter_mm, a.tilt_angle_deg)
-    diameter = _or(design.rotor_diameter_mm, largest)
+    largest = largest_rotor_diameter_mm(design.rotor_length_mm, bearing, a)
+    if design.rotor_diameter_mm is not None and design.rotor_diameter_fraction is not None:
+        raise ValueError("Give the Rotor diameter or its fraction of the largest allowed, not both")
+    if design.rotor_diameter_fraction is not None:
+        diameter = design.rotor_diameter_fraction * largest
+    else:
+        diameter = _or(design.rotor_diameter_mm, largest)
+    fraction = _or(design.rotor_diameter_fraction, diameter / largest if largest > 0.0 else math.nan)
 
     stator_length = allowance.stator_length(design.rotor_length_mm)
     stator_diameter = allowance.stator_diameter(diameter)
@@ -213,10 +235,17 @@ def evaluate(design, assumptions):
     cooling_path = _or(design.cooling_path, a.cooling_path)
     if cooling_path not in COOLING_PATHS:
         raise ValueError(f"Unknown cooling path {cooling_path!r}; expected one of {COOLING_PATHS}")
-    windage = windage_torque(radius_m, design.rotor_length_mm / 1e3, a.rotor_stator_gap_mm / 1e3, spin,
-                             a.environment_temperature_k, vapour_p, a.accommodation_coefficient,
-                             environment_gas)
-    windage_torque_n_m = windage.torque_n_m * a.windage_torque_multiplier
+    # The Turbine Cap turns in Drive Gas at its supply temperature and the Back Pressure,
+    # the body below it in the vapour; both across the same gap to the Stator.
+    windage = rotor_windage(radius_m, a.rotor_stator_gap_mm / 1e3, spin,
+                            turbine_cap_length_m=a.turbine_cap_height_mm / 1e3, drive_gas_temperature_k=gas_t,
+                            back_pressure_pa=back_p, body_length_m=body_length_mm / 1e3,
+                            vapour_temperature_k=a.environment_temperature_k, vapour_pressure_pa=vapour_p,
+                            accommodation=a.accommodation_coefficient, drive_gas=drive_gas,
+                            vapour_gas=environment_gas)
+    cap_windage_torque = windage.turbine_cap.torque_n_m * a.windage_torque_multiplier
+    body_windage_torque = windage.body.torque_n_m * a.windage_torque_multiplier
+    windage_torque_n_m = cap_windage_torque + body_windage_torque
     if cooling_path == COLD_SUPPORT:
         cold_gap_mm = _or(design.cold_support_gap_mm, a.cold_support_gap_mm)
         cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, a.environment_temperature_k,
@@ -242,11 +271,12 @@ def evaluate(design, assumptions):
     def drive(supply_p):
         flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient, drive_gas)
         torque = nozzle_count * turbine_model.torque(flow.mass_flow_kg_s, flow.jet_velocity_m_s, angle_deg,
-                                                     radius_m, spin, a.turbine_efficiency)
+                                                     radius_m, spin,
+                                                     a.turbine_efficiency * a.turbine_efficiency_correction[turbine])
         return flow, torque
 
-    supply_p = _required_supply_pressure(drive, drag_torque, back_p,
-                                         _PRESSURE_SEARCH_CEILING * a.max_supply_pressure_bar * PA_PER_BAR)
+    # Searched only up to the Supply Pressure limit; a Design that needs more is reported as inf.
+    supply_p = _required_supply_pressure(drive, drag_torque, back_p, a.max_supply_pressure_bar * PA_PER_BAR)
     if math.isfinite(supply_p):
         flow, turbine_torque = drive(supply_p)
         mass_flow, choked, jet_v = nozzle_count * flow.mass_flow_kg_s, flow.choked, flow.jet_velocity_m_s
@@ -258,8 +288,11 @@ def evaluate(design, assumptions):
     sample_mm = _or(design.sample_length_mm, a.baseline_sample_length_mm)
     sample_k = _or(design.sample_conductivity_w_m_k, a.sample_conductivity_w_m_k)
     sample_q = _or(design.sample_internal_heat_load_w, a.sample_internal_heat_load_w)
-    windage_heat = (windage_torque_n_m * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
-                    / (design.rotor_length_mm / 1e3))
+    # The body's windage heat is spread over the body alone. The cap's is taken up at the Turbine
+    # Cap, which the Drive Gas holds at its temperature, so it does not reach the body.
+    windage_heat = (body_windage_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
+                    / (body_length_mm / 1e3))
+    cap_windage_heat = cap_windage_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
     thermal = rotor_thermal(
         outer_radius_m=radius_m,
         wall_m=wall_mm / 1e3,
@@ -326,9 +359,10 @@ def evaluate(design, assumptions):
     # Gas-bearing whirl must stay clear above the Target Spin Rate by the same separation.
     whirl_limit_hz = spin * (1.0 + a.critical_speed_separation)
 
-    # Each constraint's fractional margin; the smallest is the Binding Constraint.
+    # Each constraint's fractional margin.
+    bore_margin = (usable_bore - width) / usable_bore if diameter > 0.0 else -1.0
     margins = {
-        "Probe Bore": (usable_bore - width) / usable_bore if diameter > 0.0 else -1.0,
+        "Probe Bore": bore_margin,
         "Supply Pressure": (a.max_supply_pressure_bar - supply_bar) / a.max_supply_pressure_bar,
         "Stress": (safety_factor - a.required_safety_factor) / a.required_safety_factor,
         "Critical Speed": (separation - a.critical_speed_separation) / a.critical_speed_separation,
@@ -339,21 +373,23 @@ def evaluate(design, assumptions):
     }
     assert tuple(margins) == CONSTRAINTS
     # A Design that breaks several constraints is ruled out by the first in build order
-    # (it cannot be built if it does not fit); otherwise the smallest margin limits it.
-    # A diameter sized to the Probe Bore has zero bore margin by construction, so it is left out.
+    # (it cannot be built if it does not fit); otherwise the physics constraint with the smallest
+    # margin limits it. The Probe Bore margin only says how close the chosen diameter sits to the
+    # bore limit, so it is reported on its own.
     violated = [name for name, margin in margins.items() if margin < -_MARGIN_TOLERANCE]
-    candidates = {k: v for k, v in margins.items() if k != "Probe Bore" or design.rotor_diameter_mm is not None}
-    binding = violated[0] if violated else min(candidates, key=candidates.get)
+    binding = violated[0] if violated else min(PHYSICS_CONSTRAINTS, key=margins.get)
 
     return Results(
         rotor_length_mm=design.rotor_length_mm,
         rotor_diameter_mm=diameter,
+        rotor_diameter_fraction=fraction,
         max_rotor_diameter_mm=largest,
         stator_length_mm=stator_length,
         stator_diameter_mm=stator_diameter,
         projected_width_mm=width,
         usable_bore_mm=usable_bore,
         fits_bore=fits,
+        probe_bore_margin=bore_margin,
         nozzle_count=nozzle_count,
         nozzle_throat_mm=throat_mm,
         nozzle_angle_deg=angle_deg,
@@ -373,8 +409,12 @@ def evaluate(design, assumptions):
         turbine_torque_n_m=turbine_torque,
         turbine_torque_per_flow_n_m_s_kg=turbine_torque / mass_flow if math.isfinite(mass_flow) else math.nan,
         drag_torque_n_m=drag_torque,
-        windage_regime=windage.regime,
-        knudsen_number=windage.knudsen_number,
+        turbine_cap_windage_torque_n_m=cap_windage_torque,
+        turbine_cap_windage_regime=windage.turbine_cap.regime,
+        turbine_cap_windage_heat_w=cap_windage_heat,
+        body_windage_torque_n_m=body_windage_torque,
+        windage_regime=windage.body.regime,
+        knudsen_number=windage.body.knudsen_number,
         wall_thickness_mm=wall_mm,
         sample_length_mm=sample_mm,
         sample_conductivity_w_m_k=sample_k,
@@ -420,13 +460,23 @@ def evaluate(design, assumptions):
 
 
 def _required_supply_pressure(drive, drag_torque, back_pressure, ceiling):
-    """Lowest Supply Pressure whose turbine torque balances the drag; inf if none up to ceiling."""
-    if drive(ceiling)[1] < drag_torque:
+    """Lowest Supply Pressure whose turbine torque balances the drag; inf if none up to ceiling.
+
+    A pressure whose Nozzle throat falls below the search range (a liquid-like supply) is
+    counted as not balancing the drag, so it can only raise the answer, never invent one.
+    """
+    def balances(supply_p):
+        try:
+            return drive(supply_p)[1] >= drag_torque
+        except ThroatSearchRangeError:
+            return False
+
+    if not balances(ceiling):
         return math.inf
     lo, hi = back_pressure, ceiling
     while hi / lo > 1.0 + _PRESSURE_REL_TOLERANCE:
         mid = math.sqrt(lo * hi)  # geometric: the answer can lie decades above back pressure
-        if drive(mid)[1] < drag_torque:
+        if not balances(mid):
             lo = mid
         else:
             hi = mid

@@ -14,3 +14,6 @@ packages = ["rotor_design"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Slow tests are skipped by default; run everything with: pytest -m ""
+addopts = "-m 'not slow'"
+markers = ["slow: runs the study end to end (minutes each); run with pytest -m slow or pytest -m \"\""]

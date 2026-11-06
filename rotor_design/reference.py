@@ -20,7 +20,7 @@ from rotor_design.evaluate import STANDARD_GRAVITY
 from rotor_design.gas import GASES, isentropic_state, stagnation_state
 from rotor_design.nozzle import nozzle_flow
 from rotor_design.thermal import fin_profile
-from rotor_design.turbine import FlutedCap
+from rotor_design.turbine import FLUTED_CAP, FlutedCap
 
 PA_PER_PSI = 6894.757293168
 
@@ -94,7 +94,7 @@ def _total_to_static_efficiency(v, a):
     radius = v["mean_diameter_cm"] / 200.0
     spin_rate = rim_speed / (2.0 * math.pi * radius)
     torque = FlutedCap().torque(flow.mass_flow_kg_s, flow.jet_velocity_m_s, v["nozzle_angle_deg"], radius,
-                                spin_rate, a.turbine_efficiency)
+                                spin_rate, a.turbine_efficiency * a.turbine_efficiency_correction[FLUTED_CAP])
     return torque * 2.0 * math.pi * spin_rate / (flow.mass_flow_kg_s * ideal_work)
 
 
