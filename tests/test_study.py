@@ -14,7 +14,7 @@ from rotor_design.study import configuration_name, run_study, study_designs
 pytestmark = pytest.mark.slow
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
-# Every Configuration at two Rotor Lengths: the 10 mm Rotor is too short for a 5 mm Sample Zone.
+# Every Configuration at two Rotor Lengths: the 10 mm Rotor leaves its 5 mm Sample no Placement Window.
 TINY_GRID = {"rotor_length_mm": [10.0, 20.0], "nozzle_throat_mm": [0.3], "cold_support_gap_mm": [0.1]}
 # The shared study also tries two Nozzle counts: each Rotor then has two Nozzle setups, which tie
 # on Sample Heat Load because Nozzle geometry only sets the drive. Of its two Rotor diameters,
@@ -155,8 +155,8 @@ def test_full_study_maps_the_binding_constraint_for_each_configuration(tiny_stud
                   for c in cells) == sorted(
         (n, length, d) for n in names for length, d in ((10.0, 3.5), (10.0, 9.0), (20.0, 3.5)))
     assert all("probe_bore_margin" in c for c in cells)
-    # The 10 mm Rotor is ruled out by too short a Sample Zone in every Configuration.
-    assert {c["binding_constraint"] for c in cells if float(c["rotor_length_mm"]) == 10.0} == {"Sample Zone"}
+    # The 10 mm Rotor is ruled out by an empty Placement Window in every Configuration.
+    assert {c["binding_constraint"] for c in cells if float(c["rotor_length_mm"]) == 10.0} == {"Placement Window"}
     assert all(c["feasible"] == "False" for c in cells if float(c["rotor_length_mm"]) == 10.0)
 
     for name in names:

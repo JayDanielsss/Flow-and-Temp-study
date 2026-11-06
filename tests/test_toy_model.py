@@ -104,7 +104,7 @@ def test_bending_is_the_free_free_tube(toy):
 
 def test_with_no_heat_sources_the_whole_rotor_stays_at_the_common_temperature(toy):
     # Stator, Turbine Cap and gas all at 300 K; nothing does work on the Rotor.
-    # The whole body below the Turbine Cap (20 - 3 = 17 mm) is the Sample Zone.
+    # The whole body below the Turbine Cap (20 - 3 = 17 mm) is the Sample Zone (a diagnostic).
     assert np.allclose(toy.temperature_k, 300.0, atol=1e-6)
     assert toy.sample_zone_mm == pytest.approx(17.0, rel=1e-6)
     assert toy.sample_heat_load_w == pytest.approx(0.0, abs=1e-9)

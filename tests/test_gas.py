@@ -1,6 +1,8 @@
 """Gas public functions, checked against tabulated and limiting values."""
 
+import numpy as np
 import pytest
+from CoolProp.CoolProp import PropsSI
 
 from rotor_design.gas import (AIR, GASES, HELIUM, NITROGEN, gap_heat_transfer_coefficient, knudsen_number,
                               mean_free_path, stagnation_state, vapour_enthalpy, vapour_thermal_conductivity,
@@ -84,3 +86,13 @@ def test_diatomic_enthalpy_difference_near_ideal_is_seven_halves_r_delta_t():
 def test_properties_below_a_gas_data_range_raise(call):
     with pytest.raises(ValueError, match="No .* property data below"):
         call()
+
+
+def test_helium_transport_properties_have_no_step_where_the_table_hands_over_to_coolprop():
+    # Hurly & Moldover's table ends at 10 K; CoolProp, which differs there by a few percent, is
+    # scaled to meet it and joins unscaled by 20 K.
+    for prop in (vapour_viscosity, vapour_thermal_conductivity):
+        assert prop(10.0 + 1e-9) == pytest.approx(prop(10.0), rel=1e-6)
+    assert vapour_viscosity(25.0) == pytest.approx(PropsSI("V", "T", 25.0, "P", 100.0, "Helium"), rel=1e-12)
+    temperatures = np.array([5.0, 10.0, 15.0, 25.0])
+    assert vapour_viscosity(temperatures) == pytest.approx([vapour_viscosity(t) for t in temperatures], rel=1e-12)

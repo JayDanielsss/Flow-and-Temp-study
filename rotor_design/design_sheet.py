@@ -382,10 +382,24 @@ def rotor_rows(sheet):
 
 
 def sample_rows(sheet):
-    r = sheet.results
+    r, d = sheet.results, sheet.design
+    window = dict(feasible_min=r.placement_window_low_mm, feasible_max=r.placement_window_high_mm)
+    if d.sample_position_mm is None:
+        position = Row("Sample", "Sample Position", r.sample_position_mm, "mm", MODEL_DERIVED,
+                       "Bottom Cap face to the bottom of the Sample; placed where the Sample Heat Load is lowest "
+                       "in the Placement Window, given in feasible_min/max", key="sample_position_mm", **window)
+    else:
+        position = replace(_field_row(sheet, "Sample", "Sample Position", "sample_position_mm", "mm",
+                                      "Bottom Cap face to the bottom of the Sample; Placement Window in "
+                                      "feasible_min/max"), **window)
     return [
         _field_row(sheet, "Sample", "length", "sample_length_mm", "mm",
-                   "packed from the Bottom Cap face upward", design_knob("sample_length_mm", lower=_SMALLEST_MM)),
+                   "", design_knob("sample_length_mm", lower=_SMALLEST_MM)),
+        position,
+        Row("Sample", "Bottom Standoff", r.bottom_standoff_mm, "mm", MODEL_DERIVED,
+            "least distance from the Bottom Cap face to the bottom of the Sample, at the Placement Window's low edge"),
+        Row("Sample", "Turbine Cap Standoff", r.turbine_cap_standoff_mm, "mm", MODEL_DERIVED,
+            "least distance from the top of the Sample to the Turbine Cap, at the Placement Window's high edge"),
         Row("Sample", "volume", r.sample_volume_mm3, "mm^3", MODEL_DERIVED, "Rotor bore over the Sample length"),
         _field_row(sheet, "Sample", "thermal conductivity", "sample_conductivity_w_m_k", "W/(m K)",
                    "no source", design_knob("sample_conductivity_w_m_k", lower=1e-6)),
@@ -532,7 +546,8 @@ def sample_limit_k(assumptions):
 def results_rows(sheet):
     r, a = sheet.results, sheet.assumptions
     res = partial(Row, "Results", source=MODEL_DERIVED)
-    rows = [res("Sample Heat Load", r.sample_heat_load_w, "W", note="heat crossing into the Sample Zone")]
+    rows = [res("Sample Heat Load", r.sample_heat_load_w, "W",
+                note="heat crossing the Sample's boundary at its Sample Position")]
     rows += [res(f"Sample Heat Load: {source.replace('_', ' ')}", watts, "W")
              for source, watts in r.sample_heat_load_breakdown_w.items()]
     p_note = ("Monte Carlo over the Input Uncertainty and Model-Form Error, from the study"
@@ -540,8 +555,11 @@ def results_rows(sheet):
     rows += [
         res("Sample hottest point", r.sample_hottest_temperature_k, "K",
             note="Sample Limit Temperature in feasible_max", feasible_max=sample_limit_k(a)),
-        res("Sample Zone", r.sample_zone_mm, "mm", note=f"at least {a.min_sample_zone_mm:g} mm required",
-            feasible_min=a.min_sample_zone_mm),
+        res("Placement Window", r.placement_window_high_mm - r.placement_window_low_mm, "mm",
+            note="span of Sample Positions keeping the whole Sample at or below the Sample Limit Temperature; "
+                 "must be non-empty"),
+        res("Sample Zone", r.sample_zone_mm, "mm",
+            note="diagnostic: longest stretch at or below the Sample Limit Temperature"),
         res("Bath Heat Load", r.bath_heat_load_w, "W", note="Bath Cooling Power in feasible_max",
             feasible_max=a.bath_cooling_power_w),
         res("P(feasible)", sheet.p_feasible, "", note=p_note),
@@ -724,12 +742,14 @@ def plot_temperature(sheet, path):
     """T(z) along the Rotor body with the Sample, its hottest point and the Sample Limit marked."""
     r, a = sheet.results, sheet.assumptions
     z, t = np.array(r.z_mm), np.array(r.temperature_k)
-    bottom, top = a.bottom_cap_thickness_mm, a.bottom_cap_thickness_mm + r.sample_length_mm
+    cap = a.bottom_cap_thickness_mm
+    bottom = cap + r.sample_position_mm
+    top = bottom + r.sample_length_mm
     limit = sample_limit_k(a)
     fig, ax = plt.subplots(figsize=(8, 4.4), facecolor=SURFACE)
     _style(ax)
     ax.axvspan(bottom, top, color=GRID, alpha=0.8, zorder=0, linewidth=0)
-    ax.axvspan(0.0, bottom, color=GRID, alpha=0.35, zorder=0, linewidth=0)
+    ax.axvspan(0.0, cap, color=GRID, alpha=0.35, zorder=0, linewidth=0)
     ax.plot(z, t, color=SERIES, linewidth=2, zorder=3)
     in_sample = (z >= bottom) & (z <= top)
     if in_sample.any():
@@ -742,7 +762,7 @@ def plot_temperature(sheet, path):
                 textcoords="offset points", xytext=(0, 4), ha="right", color=INK_SECONDARY, fontsize=8)
     ax.annotate("Sample", ((bottom + top) / 2, 0.97), xycoords=("data", "axes fraction"), ha="center", va="top",
                 color=INK, fontsize=9)
-    ax.annotate("Bottom\nCap", (bottom / 2, 0.97), xycoords=("data", "axes fraction"), ha="center", va="top",
+    ax.annotate("Bottom\nCap", (cap / 2, 0.97), xycoords=("data", "axes fraction"), ha="center", va="top",
                 color=INK_SECONDARY, fontsize=7)
     ax.annotate(f"Turbine Cap ({r.drive_gas_temperature_k:g} K)\nat the right end", (z[-1], 0.03),
                 xycoords=("data", "axes fraction"), ha="right", va="bottom", color=INK_SECONDARY, fontsize=8)

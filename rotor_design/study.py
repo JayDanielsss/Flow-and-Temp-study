@@ -34,7 +34,7 @@ TOP_DESIGNS = len(RANK_COLOURS)
 CATEGORICAL = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948")
 CONSTRAINT_COLOURS = dict(zip(CONSTRAINTS, CATEGORICAL))
 _CONSTRAINT_LABELS = {"Probe Bore": "Bore", "Supply Pressure": "Supply", "Stress": "Stress",
-                      "Critical Speed": "Critical", "Whirl": "Whirl", "Sample Zone": "Zone",
+                      "Critical Speed": "Critical", "Whirl": "Whirl", "Placement Window": "Window",
                       "Sample Temperature": "Temp", "Bath Heat Load": "Bath"}
 # The Configuration's discrete choices, as Design fields.
 CONFIGURATION_FIELDS = ("bearing", "pivot_to_bath", "cooling_path", "turbine", "exhaust_path")
@@ -573,7 +573,6 @@ def _plot_breakdown(results, path):
     _style(ax)
     ax.grid(axis="y", visible=False)
     for i, r in enumerate(results):
-        # Sources that remove heat from the Sample Zone are left out of the shares.
         heat = {k: max(r.sample_heat_load_breakdown_w.get(k, 0.0), 0.0) for k in sources}
         total = sum(heat.values())
         left = 0.0

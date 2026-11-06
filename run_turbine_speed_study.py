@@ -7,7 +7,7 @@ diameter swept up to the largest the Probe Bore allows. Both Turbine types are c
 The model holds the Spin Rate at the Target Spin Rate and solves for the Supply Pressure, so the
 reachable Spin Rate is found here by bisection: the highest Spin Rate whose required Supply
 Pressure stays within the Supply Pressure limit. Other constraints (stress, critical speeds,
-Sample Zone) do not cap it; the stress limit is drawn alongside for reference.
+Placement Window) do not cap it; the stress limit is drawn alongside for reference.
 
 Outputs go to Plots/ (turbine_study_*.png and turbine_study.csv). Evaluates in at most 2 processes.
 """
@@ -206,21 +206,25 @@ def _heat_lines(ax, x, results, a):
                 linewidth=1.2, linestyle=style, label=SOURCE_LABELS[source])
     ax.set_yscale("log")
     _log_axis(ax.yaxis)
-    ax.set_ylabel("Heat into the Sample Zone (mW)", color=INK_SECONDARY, fontsize=9)
+    ax.set_ylabel("Heat crossing the Sample's boundary (mW)", color=INK_SECONDARY, fontsize=9)
+
+
+def placeable(results):
+    """True when the Design has a non-empty Placement Window."""
+    return math.isfinite(results.placement_window_low_mm)
 
 
 def plot_heat_vs_spin(spins, results, diameter, slope, a, path):
     fig, ax = plt.subplots(figsize=(9.5, 4.8), facecolor=SURFACE)
     _style(ax)
-    kept = [(s, r) for s, r in zip(spins, results) if r.sample_heat_load_w > 0]
-    _heat_lines(ax, [s for s, _ in kept], [r for _, r in kept], a)
-    lost = [s for s, r in zip(spins, results) if r.sample_zone_mm < a.min_sample_zone_mm]
+    _heat_lines(ax, spins, results, a)
+    lost = [s for s, r in zip(spins, results) if not placeable(r)]
     if lost:
         ax.axvspan(min(lost), max(spins), color=GRID, alpha=0.6, zorder=0)
-        ax.annotate(f"Sample Zone\nunder {a.min_sample_zone_mm:g} mm", (min(lost), 0.03),
+        ax.annotate("Placement Window\nempty", (min(lost), 0.03),
                     xycoords=("data", "axes fraction"), textcoords="offset points", xytext=(4, 0),
                     color=INK_SECONDARY, fontsize=8)
-    kept_full = [s for s, r in zip(spins, results) if r.sample_zone_mm >= a.min_sample_zone_mm]
+    kept_full = [s for s, r in zip(spins, results) if placeable(r)]
     ax.axvline(a.target_spin_rate_hz, color=INK_SECONDARY, linewidth=1, linestyle=":")
     ax.set_xscale("log")
     _log_axis(ax.xaxis)
@@ -229,10 +233,9 @@ def plot_heat_vs_spin(spins, results, diameter, slope, a, path):
     ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="upper left", bbox_to_anchor=(1.01, 1.0))
     _finish(fig, ax, f"Sample Heat Load against Spin Rate, {diameter:.2f} mm Rotor, "
                      f"{a.max_rotor_length_mm:g} mm long",
-            path, f"Fitted Sample Heat Load ~ Spin Rate^{slope:.2f} over points with a full Sample Zone. "
-                  f"Fluted Cap;\nthe Turbine type does not change the Sample Heat Load here. "
-                  "Points with no Sample Zone left carry zero load by definition and are not drawn."
-                  + (f"\nThe Sample Zone falls under {a.min_sample_zone_mm:g} mm between {max(kept_full):.0f} and "
+            path, f"Fitted Sample Heat Load ~ Spin Rate^{slope:.2f} over points with a non-empty Placement Window. "
+                  f"Fluted Cap;\nthe Turbine type does not change the Sample Heat Load here."
+                  + (f"\nThe Placement Window empties between {max(kept_full):.0f} and "
                      f"{min(lost):.0f} Hz at this diameter." if lost and kept_full else ""))
 
 
@@ -272,8 +275,7 @@ def main(assumptions_path):
     fluted = at_target[FLUTED_CAP]
     stress_limit = [a.target_spin_rate_hz * math.sqrt(r.stress_safety_factor / a.required_safety_factor)
                     for r in fluted]
-    full_zone = [(s, r.sample_heat_load_w) for s, r in zip(HEAT_SWEEP_HZ, heat_spin)
-                 if r.sample_zone_mm >= a.min_sample_zone_mm]
+    full_zone = [(s, r.sample_heat_load_w) for s, r in zip(HEAT_SWEEP_HZ, heat_spin) if placeable(r)]
     spin_slope = log_slope(*zip(*full_zone)) if full_zone else math.nan
     diameter_slope = log_slope(diameters, [r.sample_heat_load_w for r in fluted])
 
@@ -332,7 +334,7 @@ def main(assumptions_path):
         top = max(r.sample_heat_load_breakdown_w, key=r.sample_heat_load_breakdown_w.get)
         print(f"{s:7.0f} Hz | Sample Heat Load {r.sample_heat_load_w * 1e3:8.4f} mW | zone {r.sample_zone_mm:5.2f} mm | "
               f"largest source {top:22} | Feasible {r.feasible!s:5} ({r.binding_constraint})")
-    print(f"\nSample Heat Load ~ Spin Rate^{spin_slope:.2f} (full Sample Zone), ~ diameter^{diameter_slope:.2f} "
+    print(f"\nSample Heat Load ~ Spin Rate^{spin_slope:.2f} (non-empty Placement Window), ~ diameter^{diameter_slope:.2f} "
           f"(at {a.target_spin_rate_hz:g} Hz)")
     print(CAVEAT)
     print("Outputs:", *paths.values(), csv_path, sep="\n  ")

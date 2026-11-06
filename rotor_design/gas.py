@@ -42,9 +42,11 @@ class Gas:
         return self.transport_table[0][0] if self.transport_table else self.coolprop_min_temperature_k
 
     def check_temperature(self, temperature_k):
-        if temperature_k < self.min_temperature_k:
+        """temperature_k: a number or an array; raises if any of it lies below the data."""
+        coldest = float(np.min(temperature_k))
+        if coldest < self.min_temperature_k:
             raise ValueError(f"No {self.name} property data below {self.min_temperature_k} K "
-                             f"(asked for {temperature_k} K)")
+                             f"(asked for {coldest} K)")
 
 
 # Dilute-gas viscosity and thermal conductivity of helium-4 from ab initio calculation.
@@ -70,12 +72,31 @@ GAMMA = HELIUM.gamma
 CP_DILUTE = HELIUM.cp_dilute
 
 
+# Above the table, CoolProp is scaled to meet the table's last value, the scale relaxing linearly
+# to 1 over this span (K). The two sources differ there (helium at 10 K: viscosity 3.8 %, thermal
+# conductivity 1.2 %); left as a step, it gives the fin's Picard iteration no fixed point to settle on.
+_TABLE_JOIN_SPAN_K = 10.0
+
+
 def _transport(temperature_k, gas, column, coolprop_key, scale):
+    """A dilute transport property at a temperature, or elementwise over an array of them."""
     gas.check_temperature(temperature_k)
+    t = np.asarray(temperature_k, dtype=float)
     table = gas.transport_table
-    if table and temperature_k <= table[0][-1]:
-        return float(np.interp(temperature_k, table[0], table[column])) * scale
-    return PropsSI(coolprop_key, "T", temperature_k, "P", _DILUTE_PRESSURE_PA, gas.coolprop_name)
+    in_table = t <= table[0][-1] if table else np.zeros(t.shape, dtype=bool)
+    out = np.empty(t.shape)
+    if in_table.any():
+        out[in_table] = np.interp(t[in_table], table[0], table[column]) * scale
+    if not in_table.all():
+        above = t[~in_table]
+        values = np.asarray(PropsSI(coolprop_key, "T", above, "P", _DILUTE_PRESSURE_PA, gas.coolprop_name))
+        if table:
+            t_end = table[0][-1]
+            offset = table[column][-1] * scale / PropsSI(coolprop_key, "T", t_end, "P", _DILUTE_PRESSURE_PA,
+                                                         gas.coolprop_name) - 1.0
+            values = values * (1.0 + offset * np.clip(1.0 - (above - t_end) / _TABLE_JOIN_SPAN_K, 0.0, 1.0))
+        out[~in_table] = values
+    return float(out) if out.ndim == 0 else out
 
 
 def vapour_viscosity(temperature_k, gas=HELIUM):
@@ -92,11 +113,11 @@ def gap_heat_transfer_coefficient(temperature_k, pressure_pa, gap_m, accommodati
     """Gas conduction across a narrow gap between parallel walls (W/(m^2 K)).
 
     Continuum k/gap and the free-molecular kinetic-theory limit, joined
-    harmonically (the temperature-jump result in between).
+    harmonically (the temperature-jump result in between). temperature_k may be an array.
     """
     h_continuum = vapour_thermal_conductivity(temperature_k, gas) / gap_m
     h_free_molecular = (accommodation / (2.0 - accommodation) * (gas.gamma + 1.0) / (gas.gamma - 1.0)
-                        * pressure_pa * math.sqrt(gas.specific_gas_constant / (8.0 * math.pi * temperature_k)))
+                        * pressure_pa * np.sqrt(gas.specific_gas_constant / (8.0 * math.pi * temperature_k)))
     return 1.0 / (1.0 / h_continuum + 1.0 / h_free_molecular)
 
 
