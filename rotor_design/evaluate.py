@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass, replace
 from functools import partial
 
-from rotor_design.bearing import BEARING_TYPES, GAS, TWO_CENTER_PIVOT, pivot_contact_conductance
+from rotor_design.bearing import BEARING_TYPES, GAS
 from rotor_design.drag import cold_support_shear_torque, rotor_windage
 from rotor_design.gas import GASES, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
@@ -39,23 +39,14 @@ CONSTRAINTS = ("Probe Bore", "Supply Pressure", "Stress", "Critical Speed", "Whi
 PHYSICS_CONSTRAINTS = CONSTRAINTS[1:]
 
 
-def is_excluded(bearing, pivot_to_bath):
-    """Over-constrained Configurations: a contact tie to the Bath on anything but two-center pivots."""
-    return pivot_to_bath and bearing != TWO_CENTER_PIVOT
-
-
 def configurations():
-    """Every allowed combination of Bearing type, pivot-to-Bath option, cooling path, Turbine type
-    and Exhaust Path, as Design fields."""
+    """Every combination of Bearing type, cooling path, Turbine type and Exhaust Path, as Design fields."""
     return [
-        {"bearing": bearing, "pivot_to_bath": tied, "cooling_path": path, "turbine": turbine,
-         "exhaust_path": exhaust}
+        {"bearing": bearing, "cooling_path": path, "turbine": turbine, "exhaust_path": exhaust}
         for bearing in BEARING_TYPES
-        for tied in (False, True)
         for path in COOLING_PATHS
         for turbine in TURBINE_TYPES
         for exhaust in EXHAUST_PATHS
-        if not is_excluded(bearing, tied)
     ]
 
 
@@ -90,7 +81,6 @@ class Design:
     cooling_path: str | None = None
     cold_support_gap_mm: float | None = None
     bearing: str | None = None
-    pivot_to_bath: bool | None = None
     turbine: str | None = None
     hub_exit_diameter_mm: float | None = None   # Radial-Inflow only
     exhaust_path: str | None = None
@@ -152,11 +142,12 @@ class Results:
     cold_support_drag_torque_n_m: float
     cold_support_heat_to_bath_w: float
     bearing: str
-    pivot_to_bath: bool
     bearing_friction_torque_n_m: float
     bearing_stiffness_n_m: float
     bearing_radial_space_mm: float
-    pivot_heat_to_bath_w: float
+    balance_grade_um: float         # centre-of-mass offset from the spin axis
+    unbalance_force_n: float        # rotating load m e omega^2 at the Balance Grade
+    pivot_preload_n: float          # sized Two-Center Pivot Preload; nan for other Bearings
     warning: str
     z_mm: tuple
     temperature_k: tuple
@@ -194,11 +185,8 @@ def evaluate(design, assumptions):
     if body_length_mm <= a.bottom_cap_thickness_mm:
         raise ValueError(f"Rotor Length {design.rotor_length_mm} mm leaves no room below the Turbine Cap")
     bearing = _or(design.bearing, a.bearing)
-    pivot_to_bath = _or(design.pivot_to_bath, a.pivot_to_bath)
     if bearing not in BEARING_TYPES:
         raise ValueError(f"Unknown Bearing type {bearing!r}; expected one of {BEARING_TYPES}")
-    if is_excluded(bearing, pivot_to_bath):
-        raise ValueError(f"Excluded Configuration: pivot-to-Bath needs two-center pivots, not {bearing!r}")
     bearing_model = a.bearings[bearing]
     turbine = _or(design.turbine, a.turbine)
     if turbine not in TURBINE_TYPES:
@@ -281,6 +269,11 @@ def evaluate(design, assumptions):
         ambient_pressure_pa=vapour_p,
         accommodation=a.accommodation_coefficient,
         gas=drive_gas,
+        rotor_mass_kg=body.mass_kg,
+        lower_arm_m=body.centre_of_mass_m,
+        upper_arm_m=length_m - body.centre_of_mass_m,
+        tilt_angle_deg=a.tilt_angle_deg,
+        balance_grade_m=a.balance_grade_um / 1e6,
     )
     drag_torque = windage_torque_n_m + cold_torque + bearing_load.friction_torque_n_m
 
@@ -337,10 +330,6 @@ def evaluate(design, assumptions):
         cold_support_shear_heat_w=cold_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction,
         bearing_friction_heat_w=bearing_load.bottom_friction_heat_w,
         bearing_gas_heat_w=bearing_load.bottom_gas_heat_w,
-        pivot_conductance=(lambda t: pivot_contact_conductance(bearing_load.contact_radius_m, t,
-                                                               bath_t,
-                                                               a.zirconia_conductivity_multiplier))
-        if pivot_to_bath else None,
         vented_gas_temperature_k=gas_t if exhaust_path == VENTED else None,
     )
     thermal = placement.thermal
@@ -456,11 +445,12 @@ def evaluate(design, assumptions):
         cold_support_drag_torque_n_m=cold_torque,
         cold_support_heat_to_bath_w=thermal.cold_support_heat_out_w,
         bearing=bearing,
-        pivot_to_bath=pivot_to_bath,
         bearing_friction_torque_n_m=bearing_load.friction_torque_n_m,
         bearing_stiffness_n_m=bearing_load.stiffness_n_m,
         bearing_radial_space_mm=bearing_load.radial_space_mm,
-        pivot_heat_to_bath_w=thermal.pivot_heat_out_w,
+        balance_grade_um=a.balance_grade_um,
+        unbalance_force_n=bearing_load.unbalance_force_n,
+        pivot_preload_n=bearing_load.preload_n,
         warning=bearing_load.warning,
         z_mm=tuple(thermal.z_m * 1e3),
         temperature_k=tuple(thermal.temperature_k),

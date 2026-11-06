@@ -41,6 +41,7 @@ cold_support_gap_mm = [0.01, 0.1]
 [rotor]
 turbine_cap_height_mm = 3.0    # placeholder; part of the Rotor Length, held at Drive Gas temperature
 bottom_cap_thickness_mm = 1.0  # placeholder; solid zirconia
+balance_grade_um = 1.0         # placeholder: allowed centre-of-mass offset from the spin axis
 
 [stator_allowance]
 # Radial, each side of the Rotor
@@ -96,7 +97,6 @@ gap_sweep_mm = [0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
 [bearing]
 # Bearing type: "gas", "mechanical" or "two_center_pivot"
 type = "two_center_pivot"
-pivot_to_bath = false          # lower pivot tied to the Bath by contact; two-center pivots only
 
 [bearing.gas]
 journal_length_mm = 3.0        # placeholder, per journal; two journals
@@ -115,8 +115,10 @@ radial_space_mm = 2.0          # placeholder race cross-section, each side
 
 [bearing.pivot]
 friction_coefficient = 0.1     # placeholder, dry zirconia on zirconia; no source yet
-preload_n = 0.05               # placeholder axial preload, per pivot
-tip_radius_mm = 0.5            # placeholder spherical tip radius
+ball_radius_mm = 0.5           # placeholder: zirconia ball on each end cap axis
+cone_half_angle_deg = 45.0     # placeholder: cone seat in the Stator
+preload_margin = 2.0           # placeholder: sized Preload over the least that keeps both seats loaded
+# The Preload is sized from the Balance Grade ([rotor]), Spin Rate, Rotor mass and the Tilt Angle.
 
 [design_baseline]
 # Used wherever a Design leaves a value unset

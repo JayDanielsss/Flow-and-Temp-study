@@ -96,7 +96,7 @@ def test_complete_case_is_predicted_through_evaluate(tmp_path, assumptions):
         Design(rotor_length_mm=20.0, rotor_diameter_mm=4.0, wall_thickness_mm=0.5, nozzle_count=4,
                nozzle_throat_mm=0.3, nozzle_angle_deg=20.0, drive_gas="helium", drive_gas_temperature_k=45.0,
                bearing="gas",
-               pivot_to_bath=False, turbine="fluted_cap", exhaust_path=DUCTED, back_pressure_bar=1.0),
+               turbine="fluted_cap", exhaust_path=DUCTED, back_pressure_bar=1.0),
         replace(assumptions, target_spin_rate_hz=8000.0, bath_temperature_k=45.0,
                 sample_limit_temperature_k=45.2, cold_space_pressure_pa=PA_PER_BAR))
     flow, temperature = comparisons
