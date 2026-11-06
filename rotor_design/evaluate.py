@@ -35,6 +35,8 @@ STANDARD_GRAVITY = 9.80665
 # Every constraint, in build order; a Design that breaks several is ruled out by the first.
 CONSTRAINTS = ("Probe Bore", "Supply Pressure", "Stress", "Critical Speed", "Whirl", "Sample Zone",
                "Sample Temperature", "Bath Heat Load")
+# The physics constraints, which name what limits a Design that fits the Probe Bore.
+PHYSICS_CONSTRAINTS = CONSTRAINTS[1:]
 
 
 def is_excluded(bearing, pivot_to_bath):
@@ -57,11 +59,21 @@ def configurations():
     ]
 
 
+def largest_rotor_diameter_mm(rotor_length_mm, bearing, assumptions):
+    """Largest Rotor diameter the Probe Bore allows at this Rotor Length with this Bearing type
+    (None means the assumptions file's)."""
+    a = assumptions
+    radial_space = a.bearings[_or(bearing, a.bearing)].radial_space_mm
+    allowance = replace(a.stator_allowance, bearing_radial_space=radial_space)
+    return max_rotor_diameter(rotor_length_mm, allowance, a.bore_diameter_mm, a.tilt_angle_deg)
+
+
 @dataclass(frozen=True)
 class Design:
     rotor_length_mm: float
-    # None means the largest diameter the Probe Bore allows.
+    # Give at most one of the two; both None means the largest diameter the Probe Bore allows.
     rotor_diameter_mm: float | None = None
+    rotor_diameter_fraction: float | None = None   # of the largest the Probe Bore allows
     # None means the value from the assumptions file.
     nozzle_count: int | None = None
     nozzle_throat_mm: float | None = None
@@ -86,12 +98,14 @@ class Design:
 class Results:
     rotor_length_mm: float
     rotor_diameter_mm: float
+    rotor_diameter_fraction: float  # of the largest the Probe Bore allows
     max_rotor_diameter_mm: float
     stator_length_mm: float
     stator_diameter_mm: float
     projected_width_mm: float
     usable_bore_mm: float
     fits_bore: bool
+    probe_bore_margin: float        # usable bore left over, as a fraction; reported apart from the Binding Constraint
     nozzle_count: int
     nozzle_throat_mm: float
     nozzle_angle_deg: float
@@ -182,8 +196,14 @@ def evaluate(design, assumptions):
     if turbine == RADIAL_INFLOW and design.hub_exit_diameter_mm is not None:
         turbine_model = replace(turbine_model, hub_exit_diameter_mm=design.hub_exit_diameter_mm)
     allowance = replace(a.stator_allowance, bearing_radial_space=bearing_model.radial_space_mm)
-    largest = max_rotor_diameter(design.rotor_length_mm, allowance, a.bore_diameter_mm, a.tilt_angle_deg)
-    diameter = _or(design.rotor_diameter_mm, largest)
+    largest = largest_rotor_diameter_mm(design.rotor_length_mm, bearing, a)
+    if design.rotor_diameter_mm is not None and design.rotor_diameter_fraction is not None:
+        raise ValueError("Give the Rotor diameter or its fraction of the largest allowed, not both")
+    if design.rotor_diameter_fraction is not None:
+        diameter = design.rotor_diameter_fraction * largest
+    else:
+        diameter = _or(design.rotor_diameter_mm, largest)
+    fraction = _or(design.rotor_diameter_fraction, diameter / largest if largest > 0.0 else math.nan)
 
     stator_length = allowance.stator_length(design.rotor_length_mm)
     stator_diameter = allowance.stator_diameter(diameter)
@@ -339,9 +359,10 @@ def evaluate(design, assumptions):
     # Gas-bearing whirl must stay clear above the Target Spin Rate by the same separation.
     whirl_limit_hz = spin * (1.0 + a.critical_speed_separation)
 
-    # Each constraint's fractional margin; the smallest is the Binding Constraint.
+    # Each constraint's fractional margin.
+    bore_margin = (usable_bore - width) / usable_bore if diameter > 0.0 else -1.0
     margins = {
-        "Probe Bore": (usable_bore - width) / usable_bore if diameter > 0.0 else -1.0,
+        "Probe Bore": bore_margin,
         "Supply Pressure": (a.max_supply_pressure_bar - supply_bar) / a.max_supply_pressure_bar,
         "Stress": (safety_factor - a.required_safety_factor) / a.required_safety_factor,
         "Critical Speed": (separation - a.critical_speed_separation) / a.critical_speed_separation,
@@ -352,21 +373,23 @@ def evaluate(design, assumptions):
     }
     assert tuple(margins) == CONSTRAINTS
     # A Design that breaks several constraints is ruled out by the first in build order
-    # (it cannot be built if it does not fit); otherwise the smallest margin limits it.
-    # A diameter sized to the Probe Bore has zero bore margin by construction, so it is left out.
+    # (it cannot be built if it does not fit); otherwise the physics constraint with the smallest
+    # margin limits it. The Probe Bore margin only says how close the chosen diameter sits to the
+    # bore limit, so it is reported on its own.
     violated = [name for name, margin in margins.items() if margin < -_MARGIN_TOLERANCE]
-    candidates = {k: v for k, v in margins.items() if k != "Probe Bore" or design.rotor_diameter_mm is not None}
-    binding = violated[0] if violated else min(candidates, key=candidates.get)
+    binding = violated[0] if violated else min(PHYSICS_CONSTRAINTS, key=margins.get)
 
     return Results(
         rotor_length_mm=design.rotor_length_mm,
         rotor_diameter_mm=diameter,
+        rotor_diameter_fraction=fraction,
         max_rotor_diameter_mm=largest,
         stator_length_mm=stator_length,
         stator_diameter_mm=stator_diameter,
         projected_width_mm=width,
         usable_bore_mm=usable_bore,
         fits_bore=fits,
+        probe_bore_margin=bore_margin,
         nozzle_count=nozzle_count,
         nozzle_throat_mm=throat_mm,
         nozzle_angle_deg=angle_deg,

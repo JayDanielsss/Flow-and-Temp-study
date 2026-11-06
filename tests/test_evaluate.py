@@ -54,14 +54,39 @@ def test_20mm_rotor_at_largest_diameter_fits_bore_and_is_feasible(assumptions):
     assert results.feasible
 
 
-def test_sized_diameter_leaves_probe_bore_out_of_the_binding_constraint(assumptions):
-    # Sized to the Probe Bore, its margin is zero by construction and says nothing;
-    # the same diameter given explicitly keeps Probe Bore in the choice.
+def test_binding_constraint_of_a_design_that_fits_is_a_physics_constraint(assumptions):
+    # Sized or explicit, a Design that fits is limited by its physics; the Probe Bore margin is
+    # reported on its own: zero at the bore limit, positive for a smaller diameter.
     sized = evaluate(Design(rotor_length_mm=20.0), assumptions)
     explicit = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=sized.rotor_diameter_mm), assumptions)
-    assert sized.feasible and explicit.feasible
-    assert sized.binding_constraint != "Probe Bore"
-    assert explicit.binding_constraint == "Probe Bore"
+    smaller = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=5.0), assumptions)
+    for r in (sized, explicit, smaller):
+        assert r.feasible
+        assert r.binding_constraint != "Probe Bore"
+    assert sized.probe_bore_margin == pytest.approx(0.0, abs=1e-9)
+    assert explicit.probe_bore_margin == pytest.approx(0.0, abs=1e-9)
+    # 2.874 mm less Stator diameter frees 2.874 * cos(54.74 deg) = 1.659 mm of the 29 mm usable bore.
+    assert smaller.probe_bore_margin == pytest.approx(1.659 / 29.0, abs=1e-4)
+
+
+def test_rotor_diameter_as_a_fraction_of_the_largest_the_probe_bore_allows(assumptions):
+    r = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_fraction=0.5), assumptions)
+    assert r.rotor_diameter_mm == pytest.approx(0.5 * 7.874, abs=1e-3)
+    assert r.rotor_diameter_fraction == 0.5
+    explicit = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=5.0), assumptions)
+    assert explicit.rotor_diameter_fraction == pytest.approx(5.0 / 7.874, abs=1e-4)
+    with pytest.raises(ValueError, match="diameter"):
+        evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=5.0, rotor_diameter_fraction=0.5), assumptions)
+
+
+def test_smaller_diameter_lowers_the_sample_hottest_point_at_fixed_rotor_length(assumptions):
+    # Physical trend: diameter is the strongest lever on the Sample's temperature; a thinner
+    # Rotor turns with less windage and draws less heat from the Turbine Cap.
+    for length in (14.0, 20.0):
+        hottest = [evaluate(Design(rotor_length_mm=length, rotor_diameter_mm=d), assumptions)
+                   .sample_hottest_temperature_k for d in (3.0, 5.0, 7.0)]
+        assert hottest == sorted(hottest)
+        assert hottest[0] < hottest[-1]
 
 
 def test_oversized_stator_is_ruled_out_by_probe_bore(assumptions):

@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from rotor_design.evaluate import Design, configurations
-from rotor_design.study import configuration_name, run_study
+from rotor_design.assumptions import load_assumptions
+from rotor_design.evaluate import Design, configurations, largest_rotor_diameter_mm
+from rotor_design.study import configuration_name, run_study, study_designs
 
 # Every test here runs the study end to end: excluded from the default run (see README.md).
 pytestmark = pytest.mark.slow
@@ -16,8 +17,9 @@ ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
 # Every Configuration at two Rotor Lengths: the 10 mm Rotor is too short for a 5 mm Sample Zone.
 TINY_GRID = {"rotor_length_mm": [10.0, 20.0], "nozzle_throat_mm": [0.3], "cold_support_gap_mm": [0.1]}
 # The shared study also tries two Nozzle counts: each Rotor then has two Nozzle setups, which tie
-# on Sample Heat Load because Nozzle geometry only sets the drive.
-SHARED_GRID = {**TINY_GRID, "nozzle_count": [2, 4]}
+# on Sample Heat Load because Nozzle geometry only sets the drive. Of its two Rotor diameters,
+# 9 mm is above the bore limit at 20 mm (7.87 mm with pivots) and is skipped there.
+SHARED_GRID = {**TINY_GRID, "nozzle_count": [2, 4], "rotor_diameter_mm": [3.5, 9.0]}
 # Design fields that set the drive, not the Rotor.
 NOZZLE_FIELDS = ("nozzle_count", "nozzle_throat_mm", "nozzle_angle_deg")
 # A few Monte Carlo samples on the top Designs keep the study test quick.
@@ -133,25 +135,52 @@ def test_full_study_ranks_only_feasible_designs_with_every_input_and_result(tiny
     assert order == sorted(order)
     for column in [f.name for f in fields(Design)] + ["configuration", "sample_volume_mm3",
                                                      "sample_heat_load_w", "bath_heat_load_w",
-                                                     "binding_constraint", "heat_windage_w"]:
+                                                     "binding_constraint", "heat_windage_w",
+                                                     "max_rotor_diameter_mm", "probe_bore_margin"]:
         assert column in rows[0]
     assert {r["configuration"] for r in rows} <= {configuration_name(c) for c in configurations()}
+    assert {float(r["rotor_diameter_mm"]) for r in rows} == {3.5}
+    # The Binding Constraint of a Feasible Design is a physics constraint, never the Probe Bore.
+    assert all(r["binding_constraint"] != "Probe Bore" for r in rows)
+    assert all(float(r["probe_bore_margin"]) > 0.0 for r in rows)
 
 
 def test_full_study_maps_the_binding_constraint_for_each_configuration(tiny_study):
     with open(tiny_study / "constraint_maps.csv", newline="") as f:
         cells = list(csv.DictReader(f))
     names = {configuration_name(c) for c in configurations()}
-    # One cell per Configuration, Rotor Length and Nozzle throat.
-    assert sorted((c["configuration"], float(c["rotor_length_mm"])) for c in cells) == sorted(
-        (n, length) for n in names for length in (10.0, 20.0))
-    assert all(float(c["nozzle_throat_mm"]) == 0.3 for c in cells)
+    # Rotor diameter is the map's second axis: one cell per Configuration, Rotor Length and
+    # diameter, with no cell for the 9 mm Rotor above the 20 mm bore limit.
+    assert sorted((c["configuration"], float(c["rotor_length_mm"]), float(c["rotor_diameter_mm"]))
+                  for c in cells) == sorted(
+        (n, length, d) for n in names for length, d in ((10.0, 3.5), (10.0, 9.0), (20.0, 3.5)))
+    assert all("probe_bore_margin" in c for c in cells)
     # The 10 mm Rotor is ruled out by too short a Sample Zone in every Configuration.
     assert {c["binding_constraint"] for c in cells if float(c["rotor_length_mm"]) == 10.0} == {"Sample Zone"}
     assert all(c["feasible"] == "False" for c in cells if float(c["rotor_length_mm"]) == 10.0)
 
     for name in names:
         assert (tiny_study / f"constraint_map_{name}.png").stat().st_size > 0
+
+
+def test_study_grid_sweeps_rotor_diameter_up_to_the_bore_limit_for_each_rotor_length():
+    a = load_assumptions(ASSUMPTIONS_FILE)
+    designs = study_designs(a, {"rotor_length_mm": [10.0, 20.0], "rotor_diameter_mm": [3.5, 5.0, 9.0]})
+    assert {d.rotor_diameter_mm for d in designs} == {3.5, 5.0, 9.0}
+    for d in designs:
+        assert d.rotor_diameter_mm <= largest_rotor_diameter_mm(d.rotor_length_mm, d.bearing, a)
+    # Two-center pivots allow 7.87 mm at 20 mm; a mechanical bearing's races only 3.87 mm.
+    at_20mm = {b: {d.rotor_diameter_mm for d in designs if d.rotor_length_mm == 20.0 and d.bearing == b}
+               for b in ("two_center_pivot", "mechanical")}
+    assert at_20mm == {"two_center_pivot": {3.5, 5.0}, "mechanical": {3.5}}
+
+
+def test_study_grid_sweeps_rotor_diameter_as_fractions_of_the_largest_allowed():
+    a = load_assumptions(ASSUMPTIONS_FILE)
+    designs = study_designs(a, {"rotor_length_mm": [20.0], "rotor_diameter_fraction": [0.5, 1.0, 1.2]})
+    assert {d.rotor_diameter_fraction for d in designs} == {0.5, 1.0}
+    with pytest.raises(ValueError, match="diameter"):
+        study_designs(a, {"rotor_length_mm": [20.0], "rotor_diameter_mm": [5.0], "rotor_diameter_fraction": [0.5]})
 
 
 def test_full_study_plots_sample_heat_load_trade_off_and_breakdown(tiny_study):
