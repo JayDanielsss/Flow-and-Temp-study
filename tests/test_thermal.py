@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from rotor_design.thermal import fin_profile
+from rotor_design.thermal import fin_profile, solve_tridiagonal
 
 L = 0.02
 K_A = 1e-6     # W m / K
@@ -44,3 +44,13 @@ def test_heat_injected_at_insulated_tip_conducts_out_through_base():
     fin = fin_profile(L, lambda z, t: K_A, lambda z, t: 0.0, 1.2, 1.2, tip_heat_w=1e-6)
     assert fin.temperature_k[0] == pytest.approx(1.22, rel=1e-6)
     assert fin.base_heat_w == pytest.approx(-1e-6, rel=1e-6)
+
+
+def test_tridiagonal_solve_matches_a_dense_solve():
+    rng = np.random.default_rng(0)
+    n = 50
+    lower, upper = -rng.uniform(0.1, 1.0, n - 1), -rng.uniform(0.1, 1.0, n - 1)
+    diag = rng.uniform(2.5, 3.0, n)   # diagonally dominant, as the fin's matrix is
+    b = rng.normal(size=n)
+    dense = np.diag(diag) + np.diag(lower, -1) + np.diag(upper, 1)
+    assert solve_tridiagonal(lower, diag, upper, b) == pytest.approx(np.linalg.solve(dense, b), rel=1e-12)
