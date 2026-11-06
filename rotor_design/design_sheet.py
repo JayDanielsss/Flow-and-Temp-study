@@ -194,10 +194,12 @@ def design_from_ranked_csv(path, rank, assumptions):
     row = rows[0]
     chosen = ["rotor_length_mm", *CONFIGURATION_FIELDS, *assumptions.study_grid]
     values = {name: _parse_value(name, row.get(name)) for name in dict.fromkeys(chosen) if name in row}
-    diameter, largest = row.get("rotor_diameter_mm"), row.get("max_rotor_diameter_mm")
-    if diameter and largest and not math.isclose(float(diameter), float(largest), rel_tol=1e-9):
-        values["rotor_diameter_mm"] = float(diameter)
     values = {k: v for k, v in values.items() if v is not None}
+    diameter, largest = row.get("rotor_diameter_mm"), row.get("max_rotor_diameter_mm")
+    # A Design gives its diameter in mm or as a fraction, not both; a swept fraction wins.
+    if ("rotor_diameter_fraction" not in values and diameter and largest
+            and not math.isclose(float(diameter), float(largest), rel_tol=1e-9)):
+        values["rotor_diameter_mm"] = float(diameter)
     note = f"study rank {rank}, {Path(path).name}"
     return Design(**values), {name: (MODEL_DERIVED, note) for name in values}
 
@@ -313,7 +315,7 @@ def _range_job(job):
 def with_ranges(rows, sheet, keys=None, workers=1):
     """Rows with feasible_min/max filled for each row that has a Knob (and whose key is in keys,
     when given)."""
-    pinned = replace(sheet.design, rotor_diameter_mm=sheet.results.rotor_diameter_mm)
+    pinned = replace(sheet.design, rotor_diameter_mm=sheet.results.rotor_diameter_mm, rotor_diameter_fraction=None)
     todo = [i for i, r in enumerate(rows) if r.knob is not None and (keys is None or r.key in keys)]
     jobs = [(pinned, sheet.assumptions, rows[i].knob, rows[i].operating) for i in todo]
     if workers > 1 and len(jobs) > 1:
@@ -362,6 +364,9 @@ def rotor_rows(sheet):
         diameter,
         Row("Rotor", "largest outer diameter the Probe Bore allows", r.max_rotor_diameter_mm, "mm", MODEL_DERIVED,
             "at this Rotor Length, Tilt Angle and Stator Allowance"),
+        Row("Rotor", "outer diameter as a fraction of the largest allowed", r.rotor_diameter_fraction, "",
+            sheet.provenance.get("rotor_diameter_fraction", (MODEL_DERIVED, ""))[0],
+            "outer diameter over the largest the Probe Bore allows", key="rotor_diameter_fraction"),
         _field_row(sheet, "Rotor", "wall thickness", "wall_thickness_mm", "mm", "zirconia tube",
                    design_knob("wall_thickness_mm", lower=_SMALLEST_MM)),
         Row("Rotor", "bore diameter", r.rotor_diameter_mm - 2.0 * r.wall_thickness_mm, "mm", MODEL_DERIVED,
@@ -613,7 +618,7 @@ def _effect_job(job):
 def rank_placeholders(sheet, placeholders=None, workers=1):
     """Each applicable placeholder's effect on the Sample's hottest point, largest first."""
     placeholders = PLACEHOLDERS if placeholders is None else placeholders
-    pinned = replace(sheet.design, rotor_diameter_mm=sheet.results.rotor_diameter_mm)
+    pinned = replace(sheet.design, rotor_diameter_mm=sheet.results.rotor_diameter_mm, rotor_diameter_fraction=None)
     # Fields only: a Placeholder's applies test need not be picklable for the workers.
     jobs = [(p.name, p.low, p.high, p.apply, p.note, pinned, sheet.assumptions,
              sheet.results.sample_hottest_temperature_k) for p in placeholders if p.applies(sheet)]
