@@ -132,7 +132,8 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     best-ranked Nozzle setup; they are then run through the Monte Carlo over the Input
     Uncertainty and Model-Form Error: uncertainty_top_designs.csv and its plot give each one's
     median and percentile band and its probability of being a Feasible Design, and
-    uncertainty_model_form_error.csv the spread taken from each Reference Case mechanism.
+    uncertainty_model_form_error.csv the bias correction and residual spread taken from each
+    Reference Case mechanism.
     uncertainty_samples and uncertainty_designs override the assumptions file's counts.
 
     nozzle_sweeps maps a Design field (nozzle_count, nozzle_throat_mm,

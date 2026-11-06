@@ -198,6 +198,8 @@ def test_monte_carlo_bands_the_top_designs_and_reports_feasibility_as_a_probabil
     # Every Reference Case mechanism with a comparison feeds a spread into the bands.
     assert {e["mechanism"] for e in errors} == {"nozzle", "windage", "rarefied_drag", "turbine", "conduction"}
     assert all(float(e["rms_error"]) > 0.0 for e in errors)
+    # Each is a signed bias applied as a correction and the residual about it as spread.
+    assert all(float(e["bias_correction"]) > 0.0 and float(e["residual_spread"]) > 0.0 for e in errors)
 
     assert (tiny_study / "uncertainty_top_designs.png").stat().st_size > 0
 
