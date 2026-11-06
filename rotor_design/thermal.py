@@ -50,20 +50,18 @@ def fin_profile(length_m, conductance, cooling, sink_temperature_k, base_tempera
         g = np.array([conductance(zf, tf) for zf, tf in zip(z_face, t_face)]) / dz  # W/K per face
         hp = np.array([cooling(zi, ti) for zi, ti in zip(z, t)]) * cell              # W/K per node
 
-        a = np.zeros((n_nodes, n_nodes))
+        # Each node couples only to its neighbours, so the system is tridiagonal.
         b = source * cell + hp * sink_temperature_k
         b[0] += tip_heat_w + g_tip(t[0]) * tip_sink
-        for i in range(n_nodes - 1):
-            a[i, i] += g[i]
-            a[i + 1, i + 1] += g[i]
-            a[i, i + 1] -= g[i]
-            a[i + 1, i] -= g[i]
-        a[np.diag_indices(n_nodes)] += hp
-        a[0, 0] += g_tip(t[0])
-        a[-1, :] = 0.0
-        a[-1, -1] = 1.0
+        diag = hp.copy()
+        diag[:-1] += g
+        diag[1:] += g
+        diag[0] += g_tip(t[0])
+        lower, upper = -g.copy(), -g.copy()
+        lower[-1] = 0.0   # the base row holds the base temperature
+        diag[-1] = 1.0
         b[-1] = base_temperature_k
-        t_new = np.linalg.solve(a, b)
+        t_new = solve_tridiagonal(lower, diag, upper, b)
         converged = np.max(np.abs(t_new - t)) < _TOLERANCE_K
         t = t_new
         if converged:
@@ -75,6 +73,24 @@ def fin_profile(length_m, conductance, cooling, sink_temperature_k, base_tempera
     tip_out = float(g_tip(t[0]) * (t[0] - tip_sink))
     base_heat = float(np.sum(hp * (t - sink_temperature_k)) - np.sum(source * cell) + tip_out - tip_heat_w)
     return FinProfile(z, t, cell, base_heat, tip_out)
+
+
+def solve_tridiagonal(lower, diag, upper, b):
+    """x with lower[i-1] x[i-1] + diag[i] x[i] + upper[i] x[i+1] = b[i] (Thomas algorithm;
+    stable for the diagonally dominant fin matrix)."""
+    n = len(diag)
+    c, d = np.empty(n - 1), np.empty(n)
+    c[0], d[0] = upper[0] / diag[0], b[0] / diag[0]
+    for i in range(1, n):
+        denom = diag[i] - lower[i - 1] * c[i - 1]
+        if i < n - 1:
+            c[i] = upper[i] / denom
+        d[i] = (b[i] - lower[i - 1] * d[i - 1]) / denom
+    x = np.empty(n)
+    x[-1] = d[-1]
+    for i in range(n - 2, -1, -1):
+        x[i] = d[i] - c[i] * x[i + 1]
+    return x
 
 
 STEFAN_BOLTZMANN = 5.670374419e-8
