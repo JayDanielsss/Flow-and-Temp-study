@@ -8,7 +8,7 @@ import pytest
 
 from rotor_design.assumptions import load_assumptions
 from rotor_design.benchmark import (INPUTS, QUANTITIES, compare, load_case, load_cases, model_form_error)
-from rotor_design.evaluate import DUCTED, PA_PER_BAR, PA_PER_TORR, Design, evaluate
+from rotor_design.evaluate import DUCTED, PA_PER_BAR, Design, evaluate
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSUMPTIONS_FILE = ROOT / "assumptions.toml"
@@ -97,8 +97,8 @@ def test_complete_case_is_predicted_through_evaluate(tmp_path, assumptions):
                nozzle_throat_mm=0.3, nozzle_angle_deg=20.0, drive_gas="helium", drive_gas_temperature_k=45.0,
                bearing="gas",
                pivot_to_bath=False, turbine="fluted_cap", exhaust_path=DUCTED, back_pressure_bar=1.0),
-        replace(assumptions, target_spin_rate_hz=8000.0, environment_temperature_k=45.0,
-                environment_pressure_torr=PA_PER_BAR / PA_PER_TORR, stator_temperature_k=45.0))
+        replace(assumptions, target_spin_rate_hz=8000.0, bath_temperature_k=45.0,
+                sample_limit_temperature_k=45.2, cold_space_pressure_pa=PA_PER_BAR))
     flow, temperature = comparisons
     assert flow.predicted == pytest.approx(direct.required_mass_flow_kg_s)
     assert flow.model_form_error == pytest.approx((direct.required_mass_flow_kg_s - 5e-5) / 5e-5)

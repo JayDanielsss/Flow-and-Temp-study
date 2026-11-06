@@ -1,8 +1,9 @@
-"""Zirconia properties with their sources. SI units.
+"""Zirconia properties and the helium-4 vapour-pressure curve, with their sources. SI units.
 
-Full citations and the data gaps are in docs/research/zirconia-properties.md.
+Full zirconia citations and the data gaps are in docs/research/zirconia-properties.md.
 """
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -60,3 +61,48 @@ ZIRCONIA = Material(
     poissons_ratio=0.30,                # Superior Technical Ceramics (ASTM C848); Morgan datasheet
     _conductivity=_zirconia_conductivity,
 )
+
+
+# Saturated vapour pressure of liquid helium-4, on T90. Donnelly & Barenghi, J. Phys. Chem. Ref.
+# Data 27, 1217 (1998), section 17 (https://pages.uoregon.edu/rjd/vapor18.htm):
+#   1.25-5.0 K: the ITS-90 helium-4 vapour-pressure equation (Preston-Thomas, Metrologia 27, 3
+#     (1990)), T90 = A0 + sum_i Ai ((ln(p / Pa) - B) / C)^i, Table 17.1; inverted here for p.
+#   0.65-1.25 K: the low-temperature relation p = (m kT / (2 pi hbar^2))^(3/2) kT exp(-L0 / (R T)),
+#     L0 = 59.83 J/mol the latent heat at absolute zero.
+# Both reproduce the recommended values of Table 17.3 to better than 0.1 %.
+_ITS90_HELIUM4 = (
+    # (upper limit K, (A0 .. A8), B, C, pressures (Pa) bracketing the range, where T90 rises with p)
+    (2.1768, (1.392408, 0.527153, 0.166756, 0.050988, 0.026514, 0.001975, -0.017976, 0.005409, 0.013259),
+     5.6, 2.9, (50.0, 1e4)),
+    (5.0, (3.146631, 1.357655, 0.413923, 0.091159, 0.016349, 0.001826, -0.004325, -0.004973), 10.3, 1.9,
+     (3e3, 3e5)),
+)
+HELIUM4_CURVE_K = (0.65, 5.0)
+_ITS90_LOWER_K = 1.25
+_HELIUM4_LATENT_HEAT_J_MOL = 59.83
+_R_DONNELLY = 8.314510        # J/(mol K), as used with L0 by Donnelly & Barenghi
+_K_BOLTZMANN = 1.380649e-23   # J/K
+_HBAR = 1.054571817e-34       # J s
+_HELIUM4_ATOM_KG = 4.002602e-3 / 6.02214076e23
+
+
+def helium_vapour_pressure(temperature_k):
+    """Saturated vapour pressure of liquid helium-4 (Pa), 0.65-5.0 K."""
+    t = temperature_k
+    lo, hi = HELIUM4_CURVE_K
+    if not lo <= t <= hi:
+        raise ValueError(f"{t} K is off the helium-4 vapour-pressure curve ({lo}-{hi} K)")
+    if t < _ITS90_LOWER_K:
+        kt = _K_BOLTZMANN * t
+        return float((_HELIUM4_ATOM_KG * kt / (2.0 * math.pi * _HBAR**2)) ** 1.5 * kt
+                     * math.exp(-_HELIUM4_LATENT_HEAT_J_MOL / (_R_DONNELLY * t)))
+    coefficients, b, c, bracket = next((a, b, c, p) for limit, a, b, c, p in _ITS90_HELIUM4 if t <= limit)
+    # Bisect for x = (ln p - B) / C within the bracket.
+    x_lo, x_hi = ((math.log(p) - b) / c for p in bracket)
+    for _ in range(60):
+        x = (x_lo + x_hi) / 2.0
+        if sum(a * x**i for i, a in enumerate(coefficients)) < t:
+            x_lo = x
+        else:
+            x_hi = x
+    return float(math.exp(b + c * (x_lo + x_hi) / 2.0))

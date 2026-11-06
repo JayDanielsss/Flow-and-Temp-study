@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rotor_design.bearing import BEARING_TYPES
-from rotor_design.evaluate import DUCTED, PA_PER_BAR, PA_PER_TORR, Design, evaluate
+from rotor_design.evaluate import DUCTED, PA_PER_BAR, Design, evaluate
 from rotor_design.gas import GASES
 from rotor_design.turbine import FLUTED_CAP, TURBINE_TYPES
 
@@ -188,10 +188,12 @@ def _design_and_assumptions(inputs, assumptions):
     case_assumptions = replace(
         assumptions,
         target_spin_rate_hz=v["spin_rate_hz"],
-        environment_temperature_k=environment_k,
+        # The case's environment stands in for the Bath, with the same headroom to the Sample Limit.
+        bath_temperature_k=environment_k,
+        sample_limit_temperature_k=environment_k + (assumptions.sample_limit_temperature_k
+                                                    - assumptions.bath_temperature_k),
         environment_gas=v["drive_gas"],
-        environment_pressure_torr=v["environment_pressure_bar"] * PA_PER_BAR / PA_PER_TORR,
-        stator_temperature_k=environment_k,
+        cold_space_pressure_pa=v["environment_pressure_bar"] * PA_PER_BAR,
         max_rotor_length_mm=max(assumptions.max_rotor_length_mm, v["rotor_length_mm"]),
     )
     return design, case_assumptions

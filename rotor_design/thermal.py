@@ -100,13 +100,14 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
                   wall_conductivity, sample_conductivity_w_m_k, sample_internal_heat_load_w,
                   turbine_cap_temperature_k, bath_temperature_k, stator_temperature_k,
                   vapour_pressure_pa, gap_m, accommodation, emissivity, windage_heat_per_length_w_m,
-                  sample_zone_delta_t_k, gap_heat_transfer_coefficient, cold_support_gap_m=None,
+                  sample_limit_temperature_k, gap_heat_transfer_coefficient, cold_support_gap_m=None,
                   cold_support_shear_heat_w=0.0, bearing_friction_heat_w=0.0, bearing_gas_heat_w=0.0,
                   pivot_conductance=None, vented_gas_temperature_k=None):
     """Temperature along the Rotor body below the Turbine Cap, and the Sample Zone heat budget.
 
     Layout from z = 0: solid Bottom Cap, then the Sample inside the tube, then empty bore
-    up to the Turbine Cap at z = body_length_m. Vapour Cooling and radiation exchange
+    up to the Turbine Cap at z = body_length_m. The Sample Zone is the longest stretch at or
+    below sample_limit_temperature_k. Vapour Cooling and radiation exchange
     with the Stator across the gap; the radiation is the net exchange
     eps sigma (T^4 - T_stator^4), so it heats the Rotor only where the Stator is warmer.
     The Sample's centre runs hotter than its wall by Q / (4 pi k L) under internal load.
@@ -186,8 +187,7 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
                       tip_sink_temperature_k=bath_temperature_k, tip_heat_w=tip_heat_w)
     z, t, cell = fin.z_m, fin.temperature_k, fin.cell_length_m
 
-    limit = bath_temperature_k + sample_zone_delta_t_k
-    first, last, zone = _longest_cold_stretch(z, t, limit)
+    first, last, zone = _longest_cold_stretch(z, t, sample_limit_temperature_k)
 
     in_zone = np.zeros(len(z), dtype=bool)
     if zone > 0.0:
