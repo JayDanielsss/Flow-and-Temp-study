@@ -37,7 +37,7 @@ _CONSTRAINT_LABELS = {"Probe Bore": "Bore", "Supply Pressure": "Supply", "Stress
                       "Critical Speed": "Critical", "Whirl": "Whirl", "Placement Window": "Window",
                       "Sample Temperature": "Temp", "Bath Heat Load": "Bath"}
 # The Configuration's discrete choices, as Design fields.
-CONFIGURATION_FIELDS = ("bearing", "pivot_to_bath", "cooling_path", "turbine", "exhaust_path")
+CONFIGURATION_FIELDS = ("bearing", "cooling_path", "turbine", "exhaust_path")
 # Design fields that set the drive, not the Rotor. Nozzle setups of one Rotor tie on Sample Heat Load.
 NOZZLE_FIELDS = ("nozzle_count", "nozzle_throat_mm", "nozzle_angle_deg")
 # Grid fields that apply only to some Configurations.
@@ -52,8 +52,7 @@ _DIAMETER_TOLERANCE = 1e-9
 
 def configuration_name(configuration):
     """A short, file-safe name for a Configuration (a dict of its Design fields)."""
-    bearing = configuration["bearing"] + ("_to_bath" if configuration["pivot_to_bath"] else "")
-    return "-".join((bearing, configuration["cooling_path"], configuration["turbine"],
+    return "-".join((configuration["bearing"], configuration["cooling_path"], configuration["turbine"],
                      configuration["exhaust_path"]))
 
 
@@ -159,8 +158,8 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     nozzle_sweeps maps a Design field (nozzle_count, nozzle_throat_mm,
     nozzle_angle_deg) to the values tried, one field at a time about the baseline.
     Cold Support gaps are tried at the longest Rotor and compared with Vapour Cooling alone.
-    Every allowed Configuration (Bearing type, pivot-to-Bath option, cooling path, Turbine type)
-    is evaluated at the longest Rotor; excluded combinations are never evaluated.
+    Every Configuration (Bearing type, cooling path, Turbine type, Exhaust Path) is evaluated at
+    the longest Rotor.
     Both Turbine types are compared on torque per unit Drive Gas flow at each Rotor Length.
     """
     a = load_assumptions(assumptions_path)

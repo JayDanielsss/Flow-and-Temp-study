@@ -179,7 +179,6 @@ def _design_and_assumptions(inputs, assumptions):
         drive_gas=v["drive_gas"],
         drive_gas_temperature_k=v["drive_gas_temperature_k"],
         bearing=v["bearing"],
-        pivot_to_bath=False,
         turbine=turbine,
         exhaust_path=DUCTED,
         back_pressure_bar=v["back_pressure_bar"],

@@ -1,7 +1,7 @@
 """Evaluate one Design: Design plus assumptions in, Results out."""
 
 import math
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
@@ -21,6 +21,13 @@ ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
 @pytest.fixture
 def assumptions():
     return load_assumptions(ASSUMPTIONS_FILE)
+
+
+def light_pivots(assumptions):
+    """The assumptions with a 0.1 mm pivot ball. At the 0.5 mm placeholder the baseline's ring friction
+    exceeds the Bath Cooling Power; tests of other physics need a feasible baseline to start from."""
+    pivots = replace(assumptions.bearings[TWO_CENTER_PIVOT], ball_radius_mm=0.1)
+    return replace(assumptions, bearings={**assumptions.bearings, TWO_CENTER_PIVOT: pivots})
 
 
 def test_assumptions_file_holds_spec_placeholders(assumptions):
@@ -95,6 +102,7 @@ def test_sample_limit_sets_feasibility_and_sample_zone_but_not_the_temperatures(
 
 
 def test_20mm_rotor_at_largest_diameter_fits_bore_and_is_feasible(assumptions):
+    assumptions = light_pivots(assumptions)
     # Hand calculation in test_geometry: largest Rotor diameter 7.874 mm at 20 mm.
     # The Stator then exactly fills the usable bore: 30 - 2 * 0.5 = 29 mm.
     results = evaluate(Design(rotor_length_mm=20.0), assumptions)
@@ -106,6 +114,7 @@ def test_20mm_rotor_at_largest_diameter_fits_bore_and_is_feasible(assumptions):
 
 
 def test_binding_constraint_of_a_design_that_fits_is_a_physics_constraint(assumptions):
+    assumptions = light_pivots(assumptions)
     # Sized or explicit, a Design that fits is limited by its physics; the Probe Bore margin is
     # reported on its own: zero at the bore limit, positive for a smaller diameter.
     sized = evaluate(Design(rotor_length_mm=20.0), assumptions)
@@ -156,6 +165,7 @@ def test_rotor_length_above_20mm_is_rejected(assumptions):
 
 
 def test_turbine_torque_balances_drag_at_target_spin_rate(assumptions):
+    assumptions = light_pivots(assumptions)
     results = evaluate(Design(rotor_length_mm=20.0), assumptions)
     assert results.spin_rate_hz == 1000.0
     assert results.drag_torque_n_m > 0.0
@@ -189,6 +199,7 @@ HEAT_SOURCES = {"turbine_cap_conduction", "windage", "bearing_friction", "convec
 
 
 def test_baseline_reports_temperature_profile_sample_zone_and_heat_load(assumptions):
+    assumptions = light_pivots(assumptions)
     results = evaluate(Design(rotor_length_mm=20.0), assumptions)
     t = results.temperature_k
     assert len(results.z_mm) == len(t)
@@ -330,6 +341,7 @@ def test_cold_support_gap_defaults_from_assumptions_file(assumptions):
 
 
 def test_smaller_cold_support_gap_cools_sample_until_shear_heating_dominates(assumptions):
+    assumptions = light_pivots(assumptions)
     gaps_mm = assumptions.cold_support_gap_sweep_mm
     hottest = [evaluate(Design(rotor_length_mm=20.0, cooling_path=COLD_SUPPORT, cold_support_gap_mm=g),
                         assumptions).sample_hottest_temperature_k for g in gaps_mm]
@@ -348,7 +360,6 @@ def test_smaller_cold_support_gap_cools_sample_until_shear_heating_dominates(ass
 def test_bearing_type_is_part_of_the_configuration(assumptions):
     default = evaluate(Design(rotor_length_mm=20.0), assumptions)
     assert default.bearing == assumptions.bearing == TWO_CENTER_PIVOT
-    assert not default.pivot_to_bath
     for bearing in (GAS, MECHANICAL, TWO_CENTER_PIVOT):
         assert evaluate(Design(rotor_length_mm=20.0, bearing=bearing), assumptions).bearing == bearing
 
@@ -398,42 +409,57 @@ def test_only_the_mechanical_bearing_carries_a_warning(assumptions):
         assert r.warning == (MECHANICAL_WARNING if bearing == MECHANICAL else "")
 
 
-def test_pivot_to_bath_conducts_through_the_lower_pivot(assumptions):
-    free = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT, pivot_to_bath=False), assumptions)
-    tied = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT, pivot_to_bath=True), assumptions)
-    assert free.pivot_heat_to_bath_w == 0.0
-    assert tied.pivot_heat_to_bath_w > 0.0
-    assert tied.temperature_k[0] < free.temperature_k[0]
+def test_pivot_to_bath_option_is_gone(assumptions):
+    # Its contact conductance (~1e-8 W/K) changed no result (review F10).
+    assert not hasattr(assumptions, "pivot_to_bath")
+    assert "pivot_to_bath" not in {f.name for f in fields(Design)}
 
 
-@pytest.mark.parametrize("bearing", [GAS, MECHANICAL])
-def test_pivot_to_bath_with_any_other_bearing_is_excluded(assumptions, bearing):
-    with pytest.raises(ValueError, match="Excluded Configuration"):
-        evaluate(Design(rotor_length_mm=20.0, bearing=bearing, pivot_to_bath=True), assumptions)
+def test_pivot_preload_is_sized_from_the_rotor_and_reported(assumptions):
+    # Unbalance m e omega^2 at the 1 um Balance Grade; the sized Preload must exceed what one seat
+    # needs alone, 2 tan(45) x its share, and the friction heat grows with it.
+    r = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert r.balance_grade_um == 1.0
+    assert r.unbalance_force_n == pytest.approx(r.rotor_mass_kg * 1e-6 * (2 * math.pi * 1000.0) ** 2)
+    assert r.pivot_preload_n > r.unbalance_force_n
+    finer = evaluate(Design(rotor_length_mm=20.0), replace(assumptions, balance_grade_um=0.5))
+    assert finer.pivot_preload_n < r.pivot_preload_n
+    assert finer.bearing_friction_torque_n_m < r.bearing_friction_torque_n_m
+    gas = evaluate(Design(rotor_length_mm=20.0, bearing=GAS), assumptions)
+    assert math.isnan(gas.pivot_preload_n)
 
 
-def test_configurations_cover_every_allowed_combination_and_no_excluded_one():
-    combos = {(c["bearing"], c["pivot_to_bath"], c["cooling_path"], c["turbine"], c["exhaust_path"])
-              for c in configurations()}
-    # (3 Bearing types x 2 cooling paths, plus the pivot-to-Bath option on two-center pivots)
-    # x 2 Turbine types x 2 Exhaust Paths.
-    assert len(combos) == 32
-    assert all(bearing == TWO_CENTER_PIVOT for bearing, tied, *_ in combos if tied)
-    assert {c[3] for c in combos} == {FLUTED_CAP, RADIAL_INFLOW}
-    assert {c[4] for c in combos} == {VENTED, DUCTED}
+def test_baseline_pivots_now_fail_on_bath_heat_load(assumptions):
+    # The ball slides on its cone at the ring radius R cos(alpha), 0.35 mm, so the sized Preload costs
+    # far more friction heat than the old point contact: the baseline exceeds the Bath Cooling Power.
+    r = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert r.bearing_friction_torque_n_m * 2 * math.pi * 1000.0 > 0.1
+    assert not r.feasible
+    assert r.binding_constraint == "Bath Heat Load"
 
 
-def test_bottom_cap_warmed_by_lower_pivot_leaves_a_cold_sample_zone_above_it(assumptions):
-    # The solid zirconia Bottom Cap barely conducts at 1 K, so pivot friction warms its face
-    # above the limit while the Rotor above stays cold: the Sample Zone need not start at z = 0.
-    r = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT, sample_position_mm=0.0), assumptions)
+def test_configurations_cover_every_combination():
+    combos = {(c["bearing"], c["cooling_path"], c["turbine"], c["exhaust_path"]) for c in configurations()}
+    # 3 Bearing types x 2 cooling paths x 2 Turbine types x 2 Exhaust Paths.
+    assert len(combos) == len(configurations()) == 24
+    assert {c[2] for c in combos} == {FLUTED_CAP, RADIAL_INFLOW}
+    assert {c[3] for c in combos} == {VENTED, DUCTED}
+
+
+def test_bottom_cap_warmed_by_lower_pivot_pushes_the_placement_window_off_it(assumptions):
+    assumptions = light_pivots(assumptions)
+    # The solid zirconia Bottom Cap barely conducts at 1 K, so pivot friction warms its face far
+    # above the limit while the Rotor above stays cold: the Sample must stand off the Bottom Cap.
+    r = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT), assumptions)
     assert r.temperature_k[0] > 1.2
-    assert r.sample_zone_mm >= 5.0
+    assert r.bottom_standoff_mm == r.placement_window_low_mm > 0.0
     assert r.sample_hottest_temperature_k <= 1.2
     assert r.feasible
-    # On the Bottom Cap the Sample takes some of the friction heat conducted up through it.
-    assert r.sample_heat_load_breakdown_w["bearing_friction"] > 0.0
-    assert r.sample_heat_load_w == pytest.approx(sum(r.sample_heat_load_breakdown_w.values()))
+    on_cap = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT, sample_position_mm=0.0), assumptions)
+    assert on_cap.sample_hottest_temperature_k > 1.2
+    # On the Bottom Cap the Sample takes friction heat conducted up through it.
+    assert on_cap.sample_heat_load_breakdown_w["bearing_friction"] > 0.0
+    assert on_cap.sample_heat_load_w == pytest.approx(sum(on_cap.sample_heat_load_breakdown_w.values()))
 
 
 def test_turbine_type_is_part_of_the_configuration(assumptions):
@@ -541,6 +567,7 @@ def test_vented_drive_gas_convects_onto_the_rotor_and_warms_it(assumptions):
 
 
 def test_design_over_the_bath_cooling_power_is_ruled_out_by_bath_heat_load(assumptions):
+    assumptions = light_pivots(assumptions)
     design = Design(rotor_length_mm=20.0, exhaust_path=DUCTED)
     assert evaluate(design, assumptions).feasible
     load = evaluate(design, assumptions).bath_heat_load_w
@@ -551,6 +578,7 @@ def test_design_over_the_bath_cooling_power_is_ruled_out_by_bath_heat_load(assum
 
 
 def test_results_report_peak_stress_safety_factor_and_every_critical_speed(assumptions):
+    assumptions = light_pivots(assumptions)
     r = evaluate(Design(rotor_length_mm=20.0), assumptions)
     # Surface speed ~25 m/s: hoop stress a few MPa against 550 MPa tensile strength.
     assert 0.0 < r.peak_radial_stress_mpa < r.peak_hoop_stress_mpa < 10.0
@@ -672,8 +700,10 @@ def test_required_supply_pressure_beyond_the_limit_is_reported_infinite(assumpti
 # (Rotor Length, Bearing, Exhaust Path, required Supply Pressure bar, mass flow kg/s, Bath Heat Load W,
 #  feasible, Binding Constraint).
 PINNED_10_K = [
-    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05390626284447204, 3.1156131337941946e-06, 0.013222708337157251,
-     True, "Sample Temperature"),
+    # Re-recorded for the cone-seat pivots with their sized Preload (#41): ring friction raises the
+    # drag ninefold, and the warmed Bottom Cap overheats a Sample sitting on it.
+    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.4585418047229015, 5.265947912004846e-05, 0.17490746126350487,
+     False, "Sample Temperature"),
     (12.0, MECHANICAL, VENTED, 1.992195065430556, 0.00023514175608474377, 10.218698466560578,
      False, "Placement Window"),
     (12.0, GAS, DUCTED, 0.3562988836600197, 4.084740685501619e-05, 0.24008093033143652,
@@ -684,7 +714,7 @@ PINNED_10_K = [
 @pytest.mark.parametrize("length, bearing, exhaust, pressure, flow, bath, feasible, binding", PINNED_10_K)
 def test_10_k_drive_gas_results_unchanged(assumptions, length, bearing, exhaust, pressure, flow, bath,
                                           feasible, binding):
-    design = Design(rotor_length_mm=length, bearing=bearing, pivot_to_bath=False, cooling_path=VAPOUR_ONLY,
+    design = Design(rotor_length_mm=length, bearing=bearing, cooling_path=VAPOUR_ONLY,
                     turbine=FLUTED_CAP, exhaust_path=exhaust, drive_gas_temperature_k=10.0,
                     sample_position_mm=0.0)
     r = evaluate(design, assumptions)
@@ -746,10 +776,10 @@ def test_sample_heat_load_never_reads_zero_for_a_warm_sample(assumptions):
 
 
 def test_moving_the_sample_toward_the_turbine_cap_raises_its_hottest_point_and_heat_load(assumptions):
-    # From the default placement up to the top of the body, the Sample nears the 10 K Turbine Cap.
+    # From the default placement up to just short of the Turbine Cap face, the Sample nears the 10 K cap.
     start = evaluate(Design(rotor_length_mm=20.0), assumptions).sample_position_mm
     results = [evaluate(Design(rotor_length_mm=20.0, sample_position_mm=p), assumptions)
-               for p in (start, start + 2.0, start + 4.0, 11.0)]
+               for p in (start, start + (10.9 - start) / 3.0, start + 2.0 * (10.9 - start) / 3.0, 10.9)]
     hottest = [r.sample_hottest_temperature_k for r in results]
     load = [r.sample_heat_load_w for r in results]
     assert hottest == sorted(hottest) and len(set(hottest)) == len(hottest)

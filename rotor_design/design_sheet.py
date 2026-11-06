@@ -378,6 +378,9 @@ def rotor_rows(sheet):
             key="turbine_cap_height_mm", knob=assumption_knob("turbine_cap_height_mm", lower=_SMALLEST_MM)),
         Row("Bottom Cap", "thickness", a.bottom_cap_thickness_mm, "mm", PLACEHOLDER, "solid zirconia",
             key="bottom_cap_thickness_mm", knob=assumption_knob("bottom_cap_thickness_mm", lower=_SMALLEST_MM)),
+        Row("Rotor", "Balance Grade", r.balance_grade_um, "um", PLACEHOLDER,
+            f"allowed centre-of-mass offset from the spin axis; unbalance load {r.unbalance_force_n:.3g} N "
+            "at the Target Spin Rate", key="balance_grade_um", knob=assumption_knob("balance_grade_um", step=0.5)),
     ]
 
 
@@ -447,15 +450,25 @@ def drive_rows(sheet):
 
 def bearing_rows(sheet):
     r, a = sheet.results, sheet.assumptions
-    rows = [_field_row(sheet, "Bearing", "Bearing type", "bearing", "", r.warning),
-            _field_row(sheet, "Bearing", "lower pivot tied to the Bath", "pivot_to_bath", "")]
+    rows = [_field_row(sheet, "Bearing", "Bearing type", "bearing", "", r.warning)]
     model = a.bearings[r.bearing]
     if r.bearing == TWO_CENTER_PIVOT:
-        rows += [Row("Bearing", "pivot tip radius", model.tip_radius_mm, "mm", PLACEHOLDER, "spherical tip",
-                     key="pivot_tip_radius_mm",
-                     knob=bearing_knob(TWO_CENTER_PIVOT, "tip_radius_mm", lower=_SMALLEST_MM)),
-                 Row("Bearing", "pivot preload", model.preload_n, "N", PLACEHOLDER, "axial, per pivot",
-                     key="pivot_preload_n", knob=bearing_knob(TWO_CENTER_PIVOT, "preload_n", lower=1e-6))]
+        rows += [Row("Bearing", "pivot ball radius", model.ball_radius_mm, "mm", PLACEHOLDER,
+                     "zirconia ball on each end cap axis", key="pivot_ball_radius_mm",
+                     knob=bearing_knob(TWO_CENTER_PIVOT, "ball_radius_mm", lower=_SMALLEST_MM)),
+                 Row("Bearing", "pivot cone half-angle", model.cone_half_angle_deg, "deg", PLACEHOLDER,
+                     "cone seat in the Stator", key="pivot_cone_half_angle_deg",
+                     knob=bearing_knob(TWO_CENTER_PIVOT, "cone_half_angle_deg", lower=1.0, upper=89.0, step=5.0)),
+                 Row("Bearing", "pivot seat depth", model.seat_depth_mm(), "mm", MODEL_DERIVED,
+                     "cone apex to the contact ring, ball radius x cos(half-angle) / tan(half-angle)"),
+                 Row("Bearing", "pivot contact ring radius", model.ball_radius_mm * math.cos(
+                     math.radians(model.cone_half_angle_deg)), "mm", MODEL_DERIVED, "ball radius x cos(half-angle)"),
+                 Row("Bearing", "pivot Preload", r.pivot_preload_n, "N", MODEL_DERIVED,
+                     f"axial; sized to react the unbalance load and the Tilt-Angle weight component with a "
+                     f"x{model.preload_margin:g} margin"),
+                 Row("Bearing", "Preload margin", model.preload_margin, "", PLACEHOLDER,
+                     "sized Preload over the least that keeps both seats loaded", key="pivot_preload_margin",
+                     knob=bearing_knob(TWO_CENTER_PIVOT, "preload_margin", lower=1.0))]
     elif r.bearing == GAS:
         rows += [Row("Bearing", "journal length", model.journal_length_mm, "mm", PLACEHOLDER, "per journal; two journals",
                      key="gas_journal_length_mm", knob=bearing_knob(GAS, "journal_length_mm", lower=_SMALLEST_MM)),
@@ -529,8 +542,8 @@ def engineers_choice_rows(sheet):
     rows = [Row("Turbine", q, None, "", ENGINEERS_CHOICE, n) for q, n in turbine]
     rows += [Row(part, q, None, "", ENGINEERS_CHOICE, n) for part, q, n in closures]
     if r.bearing == TWO_CENTER_PIVOT:
-        rows.append(Row("Bearing", "pivot seat geometry", None, "", ENGINEERS_CHOICE,
-                        "not modelled; a sphere on a flat seat (Hertz contact) is assumed"))
+        rows.append(Row("Bearing", "Preload spring", None, "", ENGINEERS_CHOICE,
+                        "not modelled; it must hold the sized Preload through cooldown"))
     return rows
 
 
@@ -604,7 +617,11 @@ PLACEHOLDERS = [
     Placeholder("Bottom Cap thickness (mm)", 0.5, 2.0, partial(_set_assumption, "bottom_cap_thickness_mm")),
     Placeholder("pivot friction coefficient", 0.03, 0.3, _scale_bearing(TWO_CENTER_PIVOT, "friction_coefficient"),
                 applies=_bearing_is(TWO_CENTER_PIVOT)),
-    Placeholder("pivot preload (N)", 0.025, 0.1, _scale_bearing(TWO_CENTER_PIVOT, "preload_n"),
+    Placeholder("Balance Grade (um)", 0.5, 2.0, partial(_set_assumption, "balance_grade_um"),
+                "sets the unbalance load, and with it the sized pivot Preload"),
+    Placeholder("pivot ball radius (mm)", 0.25, 1.0, _scale_bearing(TWO_CENTER_PIVOT, "ball_radius_mm"),
+                applies=_bearing_is(TWO_CENTER_PIVOT)),
+    Placeholder("pivot cone half-angle (deg)", 30.0, 60.0, _scale_bearing(TWO_CENTER_PIVOT, "cone_half_angle_deg"),
                 applies=_bearing_is(TWO_CENTER_PIVOT)),
     Placeholder("gas-bearing mass flow (kg/s)", 1e-8, 1e-6, _scale_bearing(GAS, "mass_flow_kg_s"),
                 applies=_bearing_is(GAS)),

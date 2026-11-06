@@ -142,7 +142,6 @@ class RotorThermal:
     sample_heat_load_w: float        # heat crossing the Sample's boundary
     breakdown_w: dict
     cold_support_heat_out_w: float   # heat crossing the Cold Support gap to the Bath
-    pivot_heat_out_w: float          # heat conducted through the lower pivot contact to the Bath
     turbine_cap_heat_in_w: float     # heat conducted into the body from the Turbine Cap
 
 
@@ -152,7 +151,7 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
                   vapour_pressure_pa, gap_m, accommodation, emissivity, windage_heat_per_length_w_m,
                   sample_limit_temperature_k, gap_heat_transfer_coefficient, sample_position_m=0.0,
                   cold_support_gap_m=None, cold_support_shear_heat_w=0.0, bearing_friction_heat_w=0.0,
-                  bearing_gas_heat_w=0.0, pivot_conductance=None, vented_gas_temperature_k=None):
+                  bearing_gas_heat_w=0.0, vented_gas_temperature_k=None):
     """Temperature along the Rotor body below the Turbine Cap, and the Sample's heat budget.
 
     Layout from z = 0: solid Bottom Cap, then empty bore for sample_position_m, then the Sample
@@ -163,8 +162,7 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     The Sample's centre runs hotter than its wall by Q / (4 pi k L) under internal load.
     With cold_support_gap_m set, the Bottom Cap face conducts across that gap to a Cold
     Support at Bath temperature and receives cold_support_shear_heat_w from the gap shear.
-    The lower Bearing sits at the Bottom Cap: its friction heat and warm-gas heat enter there,
-    and pivot_conductance(T) (W/K), when set, conducts from there to the Bath in parallel.
+    The lower Bearing sits at the Bottom Cap: its friction heat and warm-gas heat enter there.
     With vented_gas_temperature_k set, Vented Drive Gas at that temperature washes the whole
     body (an upper bound) and convects onto it through the same gap coefficient, in parallel
     with Vapour Cooling to the Stator.
@@ -233,14 +231,12 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
             t_film = (t + bath_temperature_k) / 2.0
             return (gap_heat_transfer_coefficient(t_film, vapour_pressure_pa, cold_support_gap_m, accommodation)
                     * np.pi * r_o**2)
-    pivot = pivot_conductance or (lambda t: 0.0)
     tip_heat_w = cold_support_shear_heat_w + bearing_friction_heat_w + bearing_gas_heat_w
-    has_tip_sink = cold_support_gap_m is not None or pivot_conductance is not None
 
     # Cooling is referenced to the Stator; with the Stator at Bath temperature these coincide.
     fin = fin_profile(body_length_m, conductance, cooling, stator_temperature_k, turbine_cap_temperature_k,
                       sources, n_nodes=_DEFAULT_NODES,
-                      tip_conductance=(lambda t: cold_support(t) + pivot(t)) if has_tip_sink else None,
+                      tip_conductance=cold_support if cold_support_gap_m is not None else None,
                       tip_sink_temperature_k=bath_temperature_k, tip_heat_w=tip_heat_w, vectorized=True)
     z, t, cell, g = fin.z_m, fin.temperature_k, fin.cell_length_m, fin.face_conductance_w_k
     n = len(z)
@@ -297,7 +293,7 @@ def rotor_thermal(*, outer_radius_m, wall_m, body_length_m, bottom_cap_m, sample
     hottest = float(np.max(t[sample_nodes])) + radial_rise
     tip_rise = t[0] - bath_temperature_k
     return RotorThermal(z, t, sample_position_m, zone, hottest, float(sum(breakdown.values())), breakdown,
-                        float(cold_support(t[0]) * tip_rise), float(pivot(t[0]) * tip_rise), fin.base_heat_w)
+                        float(cold_support(t[0]) * tip_rise), fin.base_heat_w)
 
 
 @dataclass(frozen=True)

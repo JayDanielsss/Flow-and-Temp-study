@@ -32,7 +32,7 @@ GAS_REL = 5e-3  # ideal-gas hand calculation against real-gas properties
 TOY_DESIGN = Design(
     rotor_length_mm=20.0, rotor_diameter_mm=6.0, wall_thickness_mm=0.5, nozzle_count=4,
     nozzle_throat_mm=0.05, nozzle_angle_deg=20.0, drive_gas="nitrogen", drive_gas_temperature_k=300.0,
-    bearing=TWO_CENTER_PIVOT, pivot_to_bath=False, cooling_path=VAPOUR_ONLY, turbine=FLUTED_CAP,
+    bearing=TWO_CENTER_PIVOT, cooling_path=VAPOUR_ONLY, turbine=FLUTED_CAP,
     exhaust_path=DUCTED, back_pressure_bar=1.0,
 )
 
@@ -44,8 +44,8 @@ def _toy_assumptions(**overrides):
         cold_space_pressure_pa=PA_PER_BAR, target_spin_rate_hz=1000.0,
         discharge_coefficient=0.8, turbine_efficiency=1.0, rotor_stator_gap_mm=0.1,
         windage_heat_to_rotor_fraction=0.0, rotor_emissivity=0.0,
-        bearings={**a.bearings, TWO_CENTER_PIVOT: TwoCenterPivots(friction_coefficient=0.0, preload_n=0.05,
-                                                                  tip_radius_mm=0.5)},
+        bearings={**a.bearings, TWO_CENTER_PIVOT: TwoCenterPivots(friction_coefficient=0.0, ball_radius_mm=0.5,
+                                                                  cone_half_angle_deg=45.0, preload_margin=2.0)},
     )
     return replace(a, **{**toy, **overrides})
 

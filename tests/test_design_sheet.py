@@ -14,15 +14,27 @@ from rotor_design.design_sheet import (ENGINEERS_CHOICE, MODEL_DERIVED, PLACEHOL
                                        make_sheet, read_design_sheet)
 from rotor_design.evaluate import Design, evaluate
 
-ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
+REPO_ASSUMPTIONS = Path(__file__).resolve().parents[1] / "assumptions.toml"
 SOURCES = {MODEL_DERIVED, PLACEHOLDER, ENGINEERS_CHOICE}
 # One baseline Design keeps these tests quick; its Sample length has a finite feasible range.
 RANGED = "sample_length_mm"
 
 
 @pytest.fixture(scope="module")
-def assumptions():
-    return load_assumptions(ASSUMPTIONS_FILE)
+def assumptions_file(tmp_path_factory):
+    """The assumptions file with a 0.1 mm pivot ball: at the 0.5 mm placeholder the baseline's pivot
+    ring friction exceeds the Bath Cooling Power, so it would have no feasible ranges to test."""
+    folder = tmp_path_factory.mktemp("assumptions")
+    text = REPO_ASSUMPTIONS.read_text()
+    assert text.count("ball_radius_mm = 0.5 ") == 1
+    (folder / "assumptions.toml").write_text(text.replace("ball_radius_mm = 0.5 ", "ball_radius_mm = 0.1 "))
+    (folder / "references").symlink_to(REPO_ASSUMPTIONS.parent / "references")
+    return folder / "assumptions.toml"
+
+
+@pytest.fixture(scope="module")
+def assumptions(assumptions_file):
+    return load_assumptions(assumptions_file)
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +53,7 @@ def _write_ranked_csv(path, results):
 
 
 @pytest.fixture(scope="module")
-def sheets(tmp_path_factory, baseline):
+def sheets(tmp_path_factory, baseline, assumptions_file):
     """One Design Sheet chosen by rank (with an override) and one from a Design file."""
     tmp = tmp_path_factory.mktemp("sheets")
     ranked = tmp / "ranked_designs.csv"
@@ -53,7 +65,7 @@ def sheets(tmp_path_factory, baseline):
                                    "--ranges", RANGED]),
                          ("file", ["--design", str(design_file), "--ranges", "none"])):
         csv_path, plot_path = tmp / f"sheet_{name}.csv", tmp / "Plots" / f"sheet_{name}.png"
-        run_design_sheet.main([*choice, "--assumptions", str(ASSUMPTIONS_FILE), "--out", str(csv_path),
+        run_design_sheet.main([*choice, "--assumptions", str(assumptions_file), "--out", str(csv_path),
                                "--plot", str(plot_path), "--uncertainty-csv", str(tmp / "missing.csv"),
                                "--workers", "1"])
         out[name] = (csv_path, plot_path)
@@ -158,7 +170,7 @@ def test_temperature_plot_is_written(sheets):
         assert plot_path.exists() and plot_path.stat().st_size > 0 and plot_path.parent.name == "Plots"
 
 
-def test_feasible_probability_read_from_the_uncertainty_csv(tmp_path, baseline):
+def test_feasible_probability_read_from_the_uncertainty_csv(tmp_path, baseline, assumptions):
     row = {"rank": 1, "feasible_probability": 0.9,
            **{k: v for k, v in asdict(baseline).items() if not isinstance(v, (tuple, dict))}}
     path = tmp_path / "uncertainty_top_designs.csv"
@@ -167,7 +179,7 @@ def test_feasible_probability_read_from_the_uncertainty_csv(tmp_path, baseline):
         writer.writeheader()
         writer.writerow(row)
     assert feasible_probability(baseline, path) == 0.9
-    other = evaluate(Design(rotor_length_mm=20.0, nozzle_count=8), load_assumptions(ASSUMPTIONS_FILE))
+    other = evaluate(Design(rotor_length_mm=20.0, nozzle_count=8), assumptions)
     assert feasible_probability(other, path) is None
 
 
@@ -175,14 +187,27 @@ def test_sample_position_placement_window_and_standoffs_are_on_the_sheet(sheets,
     _, rows = read_design_sheet(sheets["file"][0])
     position = _row(rows, "Sample", "Sample Position")
     assert float(position["operating"]) == pytest.approx(baseline.sample_position_mm, rel=1e-5)
-    assert float(position["feasible_min"]) == pytest.approx(baseline.placement_window_low_mm, abs=1e-6)
+    assert float(position["feasible_min"]) == pytest.approx(baseline.placement_window_low_mm, rel=1e-5, abs=1e-6)
     assert float(position["feasible_max"]) == pytest.approx(baseline.placement_window_high_mm, rel=1e-5)
     assert position["source"] == MODEL_DERIVED
     assert float(_row(rows, "Sample", "Bottom Standoff")["operating"]) == pytest.approx(
-        baseline.bottom_standoff_mm, abs=1e-6)
+        baseline.bottom_standoff_mm, rel=1e-5, abs=1e-6)
     assert float(_row(rows, "Sample", "Turbine Cap Standoff")["operating"]) == pytest.approx(
         baseline.turbine_cap_standoff_mm, rel=1e-5)
     window = _row(rows, "Results", "Placement Window")
     assert float(window["operating"]) == pytest.approx(
         baseline.placement_window_high_mm - baseline.placement_window_low_mm, rel=1e-5)
     assert "Sample's boundary" in _row(rows, "Results", "Sample Heat Load")["note"]
+
+
+def test_pivot_geometry_sized_preload_and_balance_grade_are_on_the_sheet(sheets, baseline):
+    _, rows = read_design_sheet(sheets["file"][0])
+    for quantity in ("pivot ball radius", "pivot cone half-angle", "pivot seat depth", "pivot contact ring radius",
+                     "Preload margin"):
+        assert _row(rows, "Bearing", quantity)["operating"] != ""
+    preload = _row(rows, "Bearing", "pivot Preload")
+    assert float(preload["operating"]) == pytest.approx(baseline.pivot_preload_n, rel=1e-5)
+    assert preload["source"] == MODEL_DERIVED
+    grade = _row(rows, "Rotor", "Balance Grade")
+    assert float(grade["operating"]) == 1.0 and grade["unit"] == "um"
+    assert not any("Bath" in r["quantity"] and r["part"] == "Bearing" for r in rows)

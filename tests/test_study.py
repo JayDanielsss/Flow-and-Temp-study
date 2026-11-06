@@ -82,13 +82,16 @@ def test_study_compares_cooling_paths_and_plots_sample_heat_load_against_cold_su
     # One Vapour Cooling row, then one row per Cold Support gap.
     assert [r["cooling_path"] for r in rows] == ["vapour"] + ["vapour_and_cold_support"] * 3
     assert [float(r["cold_support_gap_mm"]) for r in rows[1:]] == [0.01, 0.1, 1.0]
-    shear = [float(r["heat_cold_support_shear_w"]) for r in rows[1:]]
-    assert shear == sorted(shear, reverse=True)
+    # Narrower gaps shear harder. (Little of that heat reaches the Sample now that it stands off the
+    # Bottom Cap: the Cold Support takes it straight back.)
+    shear = [float(r["cold_support_drag_torque_n_m"]) for r in rows[1:]]
+    assert shear == sorted(shear, reverse=True) and shear[-1] > 0.0
+    assert all(float(r["heat_cold_support_shear_w"]) >= 0.0 for r in rows[1:])
 
     assert (tmp_path / "sample_heat_load_vs_cold_support_gap.png").stat().st_size > 0
 
 
-def test_study_compares_bearing_configurations_without_excluded_combinations(tmp_path):
+def test_study_compares_bearing_configurations(tmp_path):
     run_study(ASSUMPTIONS_FILE, tmp_path, rotor_lengths_mm=[20.0], nozzle_sweeps={"nozzle_count": [4]},
               cold_support_gaps_mm=[0.1], grid=TINY_GRID)
 
@@ -97,7 +100,8 @@ def test_study_compares_bearing_configurations_without_excluded_combinations(tmp
     assert {r["bearing"] for r in rows} == {"gas", "mechanical", "two_center_pivot"}
     assert {r["cooling_path"] for r in rows} == {"vapour", "vapour_and_cold_support"}
     assert {r["exhaust_path"] for r in rows} == {"vented", "ducted"}
-    assert all(r["bearing"] == "two_center_pivot" for r in rows if r["pivot_to_bath"] == "True")
+    # One row per Configuration: no duplicate pivot rows now the pivot-to-Bath option is gone.
+    assert len(rows) == len({(r["bearing"], r["cooling_path"], r["turbine"], r["exhaust_path"]) for r in rows})
     for column in ("bearing_friction_torque_n_m", "bearing_stiffness_n_m", "bearing_radial_space_mm",
                    "heat_bearing_friction_w", "warning", "bath_heat_load_w", "pumping_speed_m3_s",
                    "peak_hoop_stress_mpa", "stress_safety_factor", "first_rigid_body_critical_hz",

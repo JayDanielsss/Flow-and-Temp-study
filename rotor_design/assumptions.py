@@ -43,7 +43,7 @@ class Assumptions:
     cold_support_gap_mm: float
     cold_support_gap_sweep_mm: tuple
     bearing: str
-    pivot_to_bath: bool
+    balance_grade_um: float         # Rotor centre-of-mass offset from its spin axis
     bearings: dict                  # Bearing type -> its model
     baseline_nozzle_count: int
     baseline_nozzle_throat_mm: float
@@ -134,7 +134,7 @@ def load_assumptions(path):
         cold_support_gap_mm=cold_support["gap_mm"],
         cold_support_gap_sweep_mm=tuple(cold_support["gap_sweep_mm"]),
         bearing=bearing["type"],
-        pivot_to_bath=bearing["pivot_to_bath"],
+        balance_grade_um=rotor["balance_grade_um"],
         bearings={
             GAS: GasBearing(**bearing["gas"]),
             MECHANICAL: MechanicalBearing(**bearing["mechanical"]),
