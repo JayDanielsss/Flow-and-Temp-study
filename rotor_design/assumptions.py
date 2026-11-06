@@ -31,6 +31,7 @@ class Assumptions:
     target_spin_rate_hz: float
     discharge_coefficient: float
     turbine_efficiency: float
+    turbine_efficiency_correction: dict  # Turbine type -> factor on turbine_efficiency
     exhaust_path: str
     ducted_back_pressure_bar: float
     turbine: str
@@ -69,6 +70,9 @@ class Assumptions:
     uncertainty_percentiles: tuple  # (lower, upper) band edges, in percent
     uncertainty_inputs: dict        # uncertain input -> (distribution, low, high)
     model_form_knobs: dict          # Reference Case mechanism -> the input its Model-Form Error spreads
+    uncertainty_physical_range: dict  # uncertain input or knob -> (low, high], its physical range
+    model_form_scale: dict          # Reference Case mechanism -> "log" or "logit"; absent is "log"
+    turbine_bias_correction: dict   # Turbine type -> "reference_cases" or a factor, in the Monte Carlo
     reference_cases_dir: Path
     # Warm cases only (a Benchmark Case or toy model not above a helium-4 Bath). None, as in the
     # assumptions file, takes the Cold Space pressure from the Bath Temperature on the helium-4
@@ -115,6 +119,7 @@ def load_assumptions(path):
         target_spin_rate_hz=drive["target_spin_rate_hz"],
         discharge_coefficient=drive["discharge_coefficient"],
         turbine_efficiency=drive["turbine_efficiency"],
+        turbine_efficiency_correction=dict(drive["turbine_efficiency_correction"]),
         exhaust_path=exhaust["path"],
         ducted_back_pressure_bar=exhaust["ducted_back_pressure_bar"],
         turbine=turbine["type"],
@@ -161,5 +166,8 @@ def load_assumptions(path):
         uncertainty_inputs={name: (d["distribution"], d["low"], d["high"])
                             for name, d in uncertainty["inputs"].items()},
         model_form_knobs=dict(uncertainty["model_form_knobs"]),
+        uncertainty_physical_range={name: tuple(r) for name, r in uncertainty["physical_range"].items()},
+        model_form_scale=dict(uncertainty.get("model_form_scale", {})),
+        turbine_bias_correction=dict(uncertainty["turbine_bias_correction"]),
         reference_cases_dir=Path(path).resolve().parent / uncertainty["reference_cases"],
     )

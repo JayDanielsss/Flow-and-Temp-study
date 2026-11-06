@@ -3,7 +3,6 @@
 import csv
 import itertools
 import math
-import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, fields, replace
 from functools import partial
@@ -19,7 +18,7 @@ import numpy as np
 
 from rotor_design.assumptions import load_assumptions
 from rotor_design.evaluate import (COLD_SUPPORT, CONSTRAINTS, DUCTED, VAPOUR_ONLY, Design, configurations,
-                                   evaluate)
+                                   evaluate, largest_rotor_diameter_mm)
 from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW, TURBINE_TYPES
 from rotor_design.uncertainty import bands, mechanism_errors, sample_assumptions
 
@@ -47,6 +46,8 @@ _APPLIES_WHEN = {
     "hub_exit_diameter_mm": lambda c: c["turbine"] == RADIAL_INFLOW,
     "back_pressure_bar": lambda c: c["exhaust_path"] == DUCTED,
 }
+# Slack for a swept diameter that sits exactly on the bore limit (mm, or fraction of the largest).
+_DIAMETER_TOLERANCE = 1e-9
 
 
 def configuration_name(configuration):
@@ -57,13 +58,20 @@ def configuration_name(configuration):
 
 
 def study_designs(assumptions, grid=None):
-    """Every allowed Configuration crossed with the full factorial of the grid's values."""
+    """Every allowed Configuration crossed with the full factorial of the grid's values.
+
+    Rotor diameter is swept as rotor_diameter_mm or as rotor_diameter_fraction (of the largest the
+    Probe Bore allows), not both; diameters above the bore limit for the Design's Rotor Length and
+    Bearing type are skipped, as are Sample lengths that do not fit inside the Rotor body.
+    """
     a = assumptions
     grid = a.study_grid if grid is None else grid
     design_fields = {f.name for f in fields(Design)}
     unknown = set(grid) - design_fields | set(grid) & set(CONFIGURATION_FIELDS)
     if unknown:
         raise ValueError(f"Study grid keys must be continuous Design fields, not {sorted(unknown)}")
+    if {"rotor_diameter_mm", "rotor_diameter_fraction"} <= set(grid):
+        raise ValueError("Sweep the Rotor diameter or its fraction of the largest allowed, not both")
     designs = []
     for c in configurations():
         swept = {f: v for f, v in grid.items() if _APPLIES_WHEN.get(f, lambda _: True)(c)}
@@ -72,18 +80,39 @@ def study_designs(assumptions, grid=None):
             sample_mm = _or(design.sample_length_mm, a.baseline_sample_length_mm)
             if sample_mm > design.rotor_length_mm - a.turbine_cap_height_mm - a.bottom_cap_thickness_mm:
                 continue
+            if _above_bore_limit(design, a):
+                continue
             designs.append(design)
     return designs
+
+
+def _above_bore_limit(design, assumptions):
+    if design.rotor_diameter_fraction is not None:
+        return design.rotor_diameter_fraction > 1.0 + _DIAMETER_TOLERANCE
+    if design.rotor_diameter_mm is None:
+        return False
+    largest = largest_rotor_diameter_mm(design.rotor_length_mm, design.bearing, assumptions)
+    return design.rotor_diameter_mm > largest + _DIAMETER_TOLERANCE
 
 
 def _or(value, default):
     return default if value is None else value
 
 
+# Worker processes used when the caller gives none. Worker processes re-import the caller's main
+# module, which fails (BrokenProcessPool) when that module is stdin or an interactive session, so
+# the default is one (this process) and script entry points such as run_study.py ask for more.
+DEFAULT_WORKERS = 1
+
+
+def _workers(workers):
+    return max(1, workers or DEFAULT_WORKERS)
+
+
 def evaluate_all(designs, assumptions, workers=None):
-    """Evaluate Designs in order, spread over worker processes (workers=1 runs in this process)."""
+    """Evaluate Designs in order, over worker processes when workers > 1 (default: one, in this process)."""
     designs = list(designs)
-    workers = workers or os.cpu_count() or 1
+    workers = _workers(workers)
     if workers == 1 or len(designs) < 2:
         return [evaluate(d, assumptions) for d in designs]
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -96,9 +125,12 @@ def _evaluate_pair(pair):
 
 
 def evaluate_samples(designs, samples, workers=None):
-    """Each Design evaluated on every Monte Carlo sample of the assumptions: one list of Results per Design."""
+    """Each Design evaluated on every Monte Carlo sample of the assumptions: one list of Results per Design.
+
+    Over worker processes when workers > 1 (default: one, in this process).
+    """
     pairs = [(d, s) for d in designs for s in samples]
-    workers = workers or os.cpu_count() or 1
+    workers = _workers(workers)
     if workers == 1 or len(pairs) < 2:
         flat = [evaluate(d, s) for d, s in pairs]
     else:
@@ -120,7 +152,8 @@ def run_study(assumptions_path, plots_dir, rotor_lengths_mm=None, nozzle_sweeps=
     best-ranked Nozzle setup; they are then run through the Monte Carlo over the Input
     Uncertainty and Model-Form Error: uncertainty_top_designs.csv and its plot give each one's
     median and percentile band and its probability of being a Feasible Design, and
-    uncertainty_model_form_error.csv the spread taken from each Reference Case mechanism.
+    uncertainty_model_form_error.csv the bias correction and residual spread taken from each
+    Reference Case mechanism.
     uncertainty_samples and uncertainty_designs override the assumptions file's counts.
 
     nozzle_sweeps maps a Design field (nozzle_count, nozzle_throat_mm,
@@ -234,7 +267,9 @@ def _write_constraint_maps(study, assumptions, plots_dir):
     rows = []
     for (name, x, y), results in sorted(cells.items()):
         best = _cell_best(results)
-        rows.append({"configuration": name, x_field: x, y_field: y, "binding_constraint": best.binding_constraint,
+        # The best Design's diameter is shown even when diameter is not an axis.
+        rows.append({"configuration": name, "rotor_diameter_mm": best.rotor_diameter_mm, x_field: x, y_field: y,
+                     "binding_constraint": best.binding_constraint, "probe_bore_margin": best.probe_bore_margin,
                      "feasible": best.feasible, "feasible_designs": sum(r.feasible for r in results),
                      "designs": len(results), "best_sample_heat_load_w": best.sample_heat_load_w})
     _write_rows(rows, plots_dir / "constraint_maps.csv")
@@ -245,6 +280,8 @@ def _write_constraint_maps(study, assumptions, plots_dir):
 
 _AXIS_LABELS = {
     "rotor_length_mm": "Rotor Length (mm)",
+    "rotor_diameter_mm": "Rotor diameter (mm)",
+    "rotor_diameter_fraction": "Rotor diameter, fraction of the largest allowed",
     "wall_thickness_mm": "Rotor wall thickness (mm)",
     "sample_length_mm": "Sample length (mm)",
     "drive_gas_temperature_k": "Drive Gas temperature (K)",
@@ -549,7 +586,7 @@ def _plot_breakdown(results, path):
         ax.text(101, i, _format_watts(r.sample_heat_load_w) + status, va="center", color=INK, fontsize=8)
     ax.set_yticks(range(len(results)),
                   [f"#{i + 1} {configuration_name(_configuration(r)).replace('-', ', ')}\n"
-                   f"{r.rotor_length_mm:g} mm Rotor, {r.wall_thickness_mm:g} mm wall, "
+                   f"{r.rotor_length_mm:g} x {r.rotor_diameter_mm:.3g} mm Rotor, {r.wall_thickness_mm:g} mm wall, "
                    f"{r.sample_length_mm:g} mm Sample, {r.nozzle_count} x {r.nozzle_throat_mm:g} mm "
                    f"Nozzles at {r.nozzle_angle_deg:g} deg" for i, r in enumerate(results)], fontsize=7)
     ax.invert_yaxis()
@@ -576,7 +613,8 @@ def _plot_profiles(results, assumptions, path):
         status = "" if r.feasible else ", infeasible"
         rise = np.maximum(np.array(r.temperature_k) - bath, 1e-6)
         ax.plot(r.z_mm, rise, color=colour, linewidth=2,
-                label=f"#{i + 1}: {r.rotor_length_mm:g} mm Rotor, {_format_watts(r.sample_heat_load_w)}{status}")
+                label=f"#{i + 1}: {r.rotor_length_mm:g} x {r.rotor_diameter_mm:.3g} mm Rotor, "
+                      f"{_format_watts(r.sample_heat_load_w)}{status}")
     ax.axhline(limit - bath, color=INK_SECONDARY, linewidth=1, linestyle=":",
                label=f"Sample Limit Temperature, {limit:g} K")
     ax.set_yscale("log")
@@ -640,7 +678,8 @@ def _plot_uncertainty(rows, assumptions, path):
                       ha="left", va="center", color=INK, fontsize=8)
     axes[0, 0].set_yticks(range(len(rows)),
                           [f"#{r['rank']} {r['configuration'].replace('-', ', ')}\n"
-                           f"{r['rotor_length_mm']:g} mm Rotor, {r['wall_thickness_mm']:g} mm wall, "
+                           f"{r['rotor_length_mm']:g} x {r['rotor_diameter_mm']:.3g} mm Rotor, "
+                           f"{r['wall_thickness_mm']:g} mm wall, "
                            f"{r['sample_length_mm']:g} mm Sample"
                            + (f", {r['cold_support_gap_mm']:g} mm gap" if math.isfinite(r['cold_support_gap_mm']) else "")
                            for r in rows], fontsize=7)

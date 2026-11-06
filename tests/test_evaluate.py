@@ -8,6 +8,7 @@ import pytest
 
 from rotor_design.assumptions import load_assumptions
 from rotor_design.bearing import GAS, MECHANICAL, MECHANICAL_WARNING, TWO_CENTER_PIVOT
+from rotor_design.drag import windage_torque
 from rotor_design.evaluate import (COLD_SUPPORT, DUCTED, PA_PER_TORR, VAPOUR_ONLY, VENTED, Design,
                                   configurations, evaluate)
 from rotor_design.gas import R_HELIUM, stagnation_state, vapour_enthalpy
@@ -102,14 +103,39 @@ def test_20mm_rotor_at_largest_diameter_fits_bore_and_is_feasible(assumptions):
     assert results.feasible
 
 
-def test_sized_diameter_leaves_probe_bore_out_of_the_binding_constraint(assumptions):
-    # Sized to the Probe Bore, its margin is zero by construction and says nothing;
-    # the same diameter given explicitly keeps Probe Bore in the choice.
+def test_binding_constraint_of_a_design_that_fits_is_a_physics_constraint(assumptions):
+    # Sized or explicit, a Design that fits is limited by its physics; the Probe Bore margin is
+    # reported on its own: zero at the bore limit, positive for a smaller diameter.
     sized = evaluate(Design(rotor_length_mm=20.0), assumptions)
     explicit = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=sized.rotor_diameter_mm), assumptions)
-    assert sized.feasible and explicit.feasible
-    assert sized.binding_constraint != "Probe Bore"
-    assert explicit.binding_constraint == "Probe Bore"
+    smaller = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=5.0), assumptions)
+    for r in (sized, explicit, smaller):
+        assert r.feasible
+        assert r.binding_constraint != "Probe Bore"
+    assert sized.probe_bore_margin == pytest.approx(0.0, abs=1e-9)
+    assert explicit.probe_bore_margin == pytest.approx(0.0, abs=1e-9)
+    # 2.874 mm less Stator diameter frees 2.874 * cos(54.74 deg) = 1.659 mm of the 29 mm usable bore.
+    assert smaller.probe_bore_margin == pytest.approx(1.659 / 29.0, abs=1e-4)
+
+
+def test_rotor_diameter_as_a_fraction_of_the_largest_the_probe_bore_allows(assumptions):
+    r = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_fraction=0.5), assumptions)
+    assert r.rotor_diameter_mm == pytest.approx(0.5 * 7.874, abs=1e-3)
+    assert r.rotor_diameter_fraction == 0.5
+    explicit = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=5.0), assumptions)
+    assert explicit.rotor_diameter_fraction == pytest.approx(5.0 / 7.874, abs=1e-4)
+    with pytest.raises(ValueError, match="diameter"):
+        evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=5.0, rotor_diameter_fraction=0.5), assumptions)
+
+
+def test_smaller_diameter_lowers_the_sample_hottest_point_at_fixed_rotor_length(assumptions):
+    # Physical trend: diameter is the strongest lever on the Sample's temperature; a thinner
+    # Rotor turns with less windage and draws less heat from the Turbine Cap.
+    for length in (14.0, 20.0):
+        hottest = [evaluate(Design(rotor_length_mm=length, rotor_diameter_mm=d), assumptions)
+                   .sample_hottest_temperature_k for d in (3.0, 5.0, 7.0)]
+        assert hottest == sorted(hottest)
+        assert hottest[0] < hottest[-1]
 
 
 def test_oversized_stator_is_ruled_out_by_probe_bore(assumptions):
@@ -234,6 +260,52 @@ def test_cold_support_gap_shear_adds_to_drag_torque_and_sample_heat_load(assumpt
     shear_heat = cold.cold_support_drag_torque_n_m * 2.0 * math.pi * 1000.0
     assert cold.sample_heat_load_breakdown_w["cold_support_shear"] == pytest.approx(shear_heat)
     assert cold.cold_support_heat_to_bath_w > shear_heat
+
+
+def test_windage_has_a_turbine_cap_term_in_drive_gas_and_a_body_term_in_vapour(assumptions):
+    # 8 mm Rotor (r1 = 4 mm, 0.1 mm gap), Ducted to a 1 bar Back Pressure; the bore does not matter here.
+    # The 3 mm Turbine Cap turns in 10 K helium Drive Gas at the Back Pressure, at the Couette limit:
+    #   T = 4 pi mu L_cap omega r1^2 r2^2 / (r2^2 - r1^2), mu = 2.102 uPa s  ->  1.65328e-7 N m
+    # The 17 mm body below it turns in the 1.2 K, 0.2 Torr vapour.
+    r = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=8.0, back_pressure_bar=1.0), assumptions)
+    assert r.turbine_cap_windage_torque_n_m == pytest.approx(1.65328e-7, rel=1e-3)
+    assert r.turbine_cap_windage_regime == "continuum"
+    vapour = windage_torque(4e-3, 17e-3, 0.1e-3, 1000.0, 1.0, helium_vapour_pressure(1.0))
+    assert r.body_windage_torque_n_m == pytest.approx(vapour.torque_n_m, rel=1e-12)
+    assert r.windage_regime == vapour.regime
+    assert r.drag_torque_n_m == pytest.approx(r.turbine_cap_windage_torque_n_m + r.body_windage_torque_n_m
+                                              + r.bearing_friction_torque_n_m, rel=1e-12)
+    assert r.turbine_torque_n_m == pytest.approx(r.drag_torque_n_m, rel=1e-3)
+
+
+def test_body_windage_heat_goes_to_the_body_and_cap_heat_is_counted_at_the_turbine_cap(assumptions):
+    # A 21 K Sample Limit Temperature takes in the whole 17 mm body, so the zone collects every bit of
+    # windage heat applied below the Turbine Cap; at the placeholder fraction of 1 that is all of it.
+    wide = replace(assumptions, sample_limit_temperature_k=21.0)
+    r = evaluate(Design(rotor_length_mm=20.0), wide)
+    omega = 2.0 * math.pi * 1000.0
+    assert r.sample_zone_mm == pytest.approx(17.0)
+    assert r.sample_heat_load_breakdown_w["windage"] == pytest.approx(r.body_windage_torque_n_m * omega, rel=1e-9)
+    assert r.turbine_cap_windage_heat_w == pytest.approx(r.turbine_cap_windage_torque_n_m * omega, rel=1e-12)
+
+
+def test_turbine_cap_windage_changes_the_drive_but_not_the_sample(assumptions):
+    # Room-temperature Rotor in nitrogen, Ducted to 1 bar: a helium or nitrogen Drive Gas changes
+    # only the gas the Turbine Cap turns in. Helium is the more viscous at 300 K (19.9 against
+    # 17.9 uPa s), so its cap drag and drive flow differ, while the Turbine Cap stays at 300 K and
+    # the Sample sees exactly the same Rotor.
+    warm = replace(assumptions, bath_temperature_k=300.0, sample_limit_temperature_k=300.1,
+                   cold_space_pressure_pa=760.0 * PA_PER_TORR, environment_gas="nitrogen", bearing="mechanical")
+    design = Design(rotor_length_mm=20.0, drive_gas_temperature_k=300.0, exhaust_path=DUCTED,
+                    back_pressure_bar=1.0)
+    nitrogen = evaluate(replace(design, drive_gas="nitrogen"), warm)
+    helium = evaluate(replace(design, drive_gas="helium"), warm)
+    assert helium.turbine_cap_windage_torque_n_m > nitrogen.turbine_cap_windage_torque_n_m
+    assert helium.drag_torque_n_m > nitrogen.drag_torque_n_m
+    assert helium.body_windage_torque_n_m == nitrogen.body_windage_torque_n_m
+    assert helium.temperature_k == nitrogen.temperature_k
+    assert helium.sample_hottest_temperature_k == nitrogen.sample_hottest_temperature_k
+    assert helium.sample_heat_load_breakdown_w == nitrogen.sample_heat_load_breakdown_w
 
 
 def test_cold_support_gap_defaults_from_assumptions_file(assumptions):
@@ -545,5 +617,56 @@ def test_warm_nitrogen_drive_needs_more_flow_than_helium_at_the_same_conditions(
     nitrogen = evaluate(replace(design, drive_gas="nitrogen"), warm)
     helium = evaluate(replace(design, drive_gas="helium"), warm)
     assert nitrogen.drive_gas == "nitrogen" and nitrogen.environment_gas == "nitrogen"
-    assert nitrogen.drag_torque_n_m == helium.drag_torque_n_m  # same environment gas
+    assert nitrogen.body_windage_torque_n_m == helium.body_windage_torque_n_m  # same environment gas
     assert nitrogen.required_mass_flow_kg_s > helium.required_mass_flow_kg_s
+
+
+@pytest.mark.parametrize("drive_gas_k", [5.0, 6.0, 7.0, 8.0])
+def test_cold_drive_gas_evaluates_without_raising(assumptions, drive_gas_k):
+    results = evaluate(Design(rotor_length_mm=20.0, drive_gas_temperature_k=drive_gas_k), assumptions)
+    assert results.back_pressure_bar < results.required_supply_pressure_bar <= 3.77
+    assert results.turbine_torque_n_m == pytest.approx(results.drag_torque_n_m, rel=1e-3)
+
+
+def test_cold_drive_gas_out_of_supply_pressure_reach_is_infeasible_not_raised(assumptions):
+    design = Design(rotor_length_mm=20.0, nozzle_count=1, nozzle_throat_mm=0.002, drive_gas_temperature_k=6.0)
+    results = evaluate(design, assumptions)
+    assert math.isinf(results.required_supply_pressure_bar)
+    assert not results.feasible
+    assert results.binding_constraint == "Supply Pressure"
+
+
+def test_required_supply_pressure_beyond_the_limit_is_reported_infinite(assumptions):
+    design = Design(rotor_length_mm=20.0, nozzle_count=1, nozzle_throat_mm=0.002)
+    results = evaluate(design, assumptions)
+    assert math.isinf(results.required_supply_pressure_bar)
+    assert math.isinf(results.required_mass_flow_kg_s)
+
+
+# 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit,
+# re-recorded with the Turbine Cap windage term, and again for the 1.0 K Bath Temperature (its
+# 0.117 Torr Cold Space pressure lowers the body windage; Vented gas is cooled to 1.0 K vapour):
+# (Rotor Length, Bearing, Exhaust Path, required Supply Pressure bar, mass flow kg/s, Bath Heat Load W,
+#  feasible, Binding Constraint).
+PINNED_10_K = [
+    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05390626284447204, 3.1156131337941946e-06, 0.013222708337157251,
+     True, "Sample Temperature"),
+    (12.0, MECHANICAL, VENTED, 1.992195065430556, 0.00023514175608474377, 10.218698466560578,
+     False, "Sample Zone"),
+    (12.0, GAS, DUCTED, 0.3562988836600197, 4.084740685501619e-05, 0.24008093033143652,
+     False, "Sample Zone"),
+]
+
+
+@pytest.mark.parametrize("length, bearing, exhaust, pressure, flow, bath, feasible, binding", PINNED_10_K)
+def test_10_k_drive_gas_results_unchanged(assumptions, length, bearing, exhaust, pressure, flow, bath,
+                                          feasible, binding):
+    design = Design(rotor_length_mm=length, bearing=bearing, pivot_to_bath=False, cooling_path=VAPOUR_ONLY,
+                    turbine=FLUTED_CAP, exhaust_path=exhaust, drive_gas_temperature_k=10.0)
+    r = evaluate(design, assumptions)
+    # The search resolves the Supply Pressure to 1e-6, so a changed bracket moves it within that.
+    assert r.required_supply_pressure_bar == pytest.approx(pressure, rel=1e-5)
+    assert r.required_mass_flow_kg_s == pytest.approx(flow, rel=1e-5)
+    assert r.bath_heat_load_w == pytest.approx(bath, rel=1e-5)
+    assert r.feasible == feasible
+    assert r.binding_constraint == binding

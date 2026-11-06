@@ -21,3 +21,12 @@ The goal is make the right assumptions to understand the limits for design purpo
 
 The following will use approximations and assumptions to get a best start. 
 
+
+## Running the study and the tests
+
+`python run_study.py` runs the whole study on every core; outputs go to `Plots/`. Called from
+Python, `run_study`, `evaluate_all` and `evaluate_samples` use one process unless given
+`workers=N` (worker processes fail when called from stdin or an interactive session).
+
+`pytest` runs the fast tests (a few minutes). The tests marked `slow` run the study end to end
+and take much longer: run them alone with `pytest -m slow`, or the full suite with `pytest -m ""`.
