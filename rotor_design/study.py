@@ -434,7 +434,7 @@ def _plot_nozzle_sweep(rows, assumptions, path):
 
 def _plot_cold_support_gap(vapour, cold, assumptions, path):
     gaps = [r.cold_support_gap_mm for r in cold]
-    bath = assumptions.environment_temperature_k
+    bath = assumptions.bath_temperature_k
     panels = (
         ("Sample Heat Load (mW)", lambda r: r.sample_heat_load_w * 1e3),
         ("Sample hottest-point rise above Bath (mK)", lambda r: (r.sample_hottest_temperature_k - bath) * 1e3),
@@ -607,16 +607,16 @@ def _format_watts(watts):
 def _plot_profiles(results, assumptions, path):
     fig, ax = plt.subplots(figsize=(7, 4.2), facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
-    bath = assumptions.environment_temperature_k
-    delta = assumptions.sample_zone_delta_t_k
+    bath = assumptions.bath_temperature_k
+    limit = assumptions.sample_limit_temperature_k
     for i, (r, colour) in enumerate(zip(results, RANK_COLOURS)):
         status = "" if r.feasible else ", infeasible"
         rise = np.maximum(np.array(r.temperature_k) - bath, 1e-6)
         ax.plot(r.z_mm, rise, color=colour, linewidth=2,
                 label=f"#{i + 1}: {r.rotor_length_mm:g} x {r.rotor_diameter_mm:.3g} mm Rotor, "
                       f"{_format_watts(r.sample_heat_load_w)}{status}")
-    ax.axhline(delta, color=INK_SECONDARY, linewidth=1, linestyle=":",
-               label=f"Sample Zone limit, {delta:g} K above Bath")
+    ax.axhline(limit - bath, color=INK_SECONDARY, linewidth=1, linestyle=":",
+               label=f"Sample Limit Temperature, {limit:g} K")
     ax.set_yscale("log")
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
     ax.set_title("Temperature rise above the Bath along the Rotor body, top-ranked Rotors",

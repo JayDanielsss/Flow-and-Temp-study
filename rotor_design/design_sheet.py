@@ -427,7 +427,7 @@ def drive_rows(sheet):
                                design_knob("back_pressure_bar", lower=1e-6)))
     else:
         rows.append(Row("Drive Gas", "Back Pressure", r.back_pressure_bar, "bar", PLACEHOLDER,
-                        "Vented: the environment pressure"))
+                        "Vented: the Cold Space pressure, the Bath vapour pressure"))
     return rows
 
 
@@ -526,7 +526,7 @@ ROW_BUILDERS = [rotor_rows, sample_rows, drive_rows, bearing_rows, cooling_rows,
 
 def sample_limit_k(assumptions):
     """The Sample Limit Temperature as the model applies it."""
-    return assumptions.environment_temperature_k + assumptions.sample_zone_delta_t_k
+    return assumptions.sample_limit_temperature_k
 
 
 def results_rows(sheet):
@@ -575,8 +575,8 @@ PLACEHOLDERS = [
                 partial(_set_assumption, "zirconia_conductivity_multiplier"),
                 "multiplier on the whole curve; no measured data between 1.7 and 25 K"),
     Placeholder("Sample conductivity (W/(m K), no source)", 1e-3, 1.0, partial(_set_design, "sample_conductivity_w_m_k")),
-    Placeholder("Stator temperature (K)", 1.2, 1.3, partial(_set_assumption, "stator_temperature_k"),
-                "Stator held at a fixed temperature"),
+    Placeholder("Stator temperature (K)", 1.0, 1.1, partial(_set_assumption, "stator_temperature_k"),
+                "Stator held at a fixed temperature; the Bath Temperature by default"),
     Placeholder("windage heat fraction into the Rotor", 0.5, 1.0,
                 partial(_set_assumption, "windage_heat_to_rotor_fraction")),
     Placeholder("Rotor-Stator radial gap (mm)", 0.05, 0.5, partial(_set_assumption, "rotor_stator_gap_mm")),
@@ -680,8 +680,8 @@ def header_lines(sheet, effects, label):
         "Design Sheet",
         f"Design: {label}; Configuration {configuration_name({f: getattr(r, f) for f in CONFIGURATION_FIELDS})}",
         f"Validation status: {VALIDATION_STATUS}",
-        "Values are Operating Dimensions at the Bath temperature; as_machined stays empty until thermal "
-        "contraction is modelled.",
+        f"Values are Operating Dimensions at the {sheet.assumptions.bath_temperature_k:g} K Bath Temperature; "
+        "as_machined stays empty until thermal contraction is modelled.",
         f"Feasible ranges: one quantity at a time, all others at nominal, edges to within "
         f"{RANGE_REL_TOLERANCE:.0%} of nominal.",
         f"Placeholders ranked by how far they move the Sample's hottest point "

@@ -23,7 +23,7 @@ import pytest
 
 from rotor_design.assumptions import load_assumptions
 from rotor_design.bearing import MECHANICAL, TWO_CENTER_PIVOT, MechanicalBearing, TwoCenterPivots
-from rotor_design.evaluate import DUCTED, PA_PER_BAR, PA_PER_TORR, STANDARD_GRAVITY, VAPOUR_ONLY, Design, evaluate
+from rotor_design.evaluate import DUCTED, PA_PER_BAR, STANDARD_GRAVITY, VAPOUR_ONLY, Design, evaluate
 from rotor_design.turbine import FLUTED_CAP
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
@@ -40,8 +40,8 @@ TOY_DESIGN = Design(
 def _toy_assumptions(**overrides):
     a = load_assumptions(ASSUMPTIONS_FILE)
     toy = dict(
-        environment_gas="nitrogen", environment_temperature_k=300.0, stator_temperature_k=300.0,
-        environment_pressure_torr=PA_PER_BAR / PA_PER_TORR, target_spin_rate_hz=1000.0,
+        environment_gas="nitrogen", bath_temperature_k=300.0, sample_limit_temperature_k=300.1,
+        cold_space_pressure_pa=PA_PER_BAR, target_spin_rate_hz=1000.0,
         discharge_coefficient=0.8, turbine_efficiency=1.0, rotor_stator_gap_mm=0.1,
         windage_heat_to_rotor_fraction=0.0, rotor_emissivity=0.0,
         bearings={**a.bearings, TWO_CENTER_PIVOT: TwoCenterPivots(friction_coefficient=0.0, preload_n=0.05,

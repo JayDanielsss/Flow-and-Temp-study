@@ -22,8 +22,8 @@ class Assumptions:
     stator_allowance: StatorAllowance
     turbine_cap_height_mm: float
     bottom_cap_thickness_mm: float
-    environment_temperature_k: float
-    environment_pressure_torr: float
+    bath_temperature_k: float       # every sink: Bath, Cold Support, Vapour Cooling
+    sample_limit_temperature_k: float  # the hottest the Sample may reach
     environment_gas: str
     drive_gas: str
     drive_gas_temperature_k: float
@@ -50,12 +50,10 @@ class Assumptions:
     baseline_nozzle_angle_deg: float
     baseline_wall_thickness_mm: float
     baseline_sample_length_mm: float
-    sample_zone_delta_t_k: float
     min_sample_zone_mm: float
     bath_cooling_power_w: float
     sample_internal_heat_load_w: float
     sample_conductivity_w_m_k: float
-    stator_temperature_k: float
     rotor_emissivity: float
     windage_heat_to_rotor_fraction: float
     required_safety_factor: float
@@ -76,6 +74,12 @@ class Assumptions:
     model_form_scale: dict          # Reference Case mechanism -> "log" or "logit"; absent is "log"
     turbine_bias_correction: dict   # Turbine type -> "reference_cases" or a factor, in the Monte Carlo
     reference_cases_dir: Path
+    # Warm cases only (a Benchmark Case or toy model not above a helium-4 Bath). None, as in the
+    # assumptions file, takes the Cold Space pressure from the Bath Temperature on the helium-4
+    # vapour-pressure curve.
+    cold_space_pressure_pa: float | None = None
+    # None holds the Stator at the Bath Temperature.
+    stator_temperature_k: float | None = None
 
 
 def load_assumptions(path):
@@ -106,8 +110,8 @@ def load_assumptions(path):
         ),
         turbine_cap_height_mm=rotor["turbine_cap_height_mm"],
         bottom_cap_thickness_mm=rotor["bottom_cap_thickness_mm"],
-        environment_temperature_k=environment["temperature_k"],
-        environment_pressure_torr=environment["pressure_torr"],
+        bath_temperature_k=environment["bath_temperature_k"],
+        sample_limit_temperature_k=environment["sample_limit_temperature_k"],
         environment_gas=environment["gas"],
         drive_gas=drive["gas"],
         drive_gas_temperature_k=drive["drive_gas_temperature_k"],
@@ -141,12 +145,10 @@ def load_assumptions(path):
         baseline_nozzle_angle_deg=baseline["nozzle_angle_deg"],
         baseline_wall_thickness_mm=baseline["wall_thickness_mm"],
         baseline_sample_length_mm=baseline["sample_length_mm"],
-        sample_zone_delta_t_k=thermal["sample_zone_delta_t_k"],
         min_sample_zone_mm=thermal["min_sample_zone_mm"],
         bath_cooling_power_w=thermal["bath_cooling_power_w"],
         sample_internal_heat_load_w=thermal["sample_internal_heat_load_w"],
         sample_conductivity_w_m_k=thermal["sample_conductivity_w_m_k"],
-        stator_temperature_k=thermal["stator_temperature_k"],
         rotor_emissivity=thermal["rotor_emissivity"],
         windage_heat_to_rotor_fraction=thermal["windage_heat_to_rotor_fraction"],
         required_safety_factor=stress["required_safety_factor"],

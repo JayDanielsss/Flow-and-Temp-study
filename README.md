@@ -1,6 +1,6 @@
 This is a study to determine the limits of a spining rotor at high speeds in a cryogenic environment. 
 
-environment temperature is 1.2K environment pressure is .2 Torr. 
+The Bath is pumped to a Bath Temperature of 1.0 K; its vapour pressure (about 0.12 Torr) follows from the helium-4 vapour-pressure curve. The Sample's hottest point must stay at or below the Sample Limit Temperature of 1.2 K. 
 The length of the rotor is limited to 20 mm. The turbine that drives the rotation is limited to a radial turbine to conserve space. 
 A high flow gas stream of helium is cooled close to liquid temperature, 10K. The flow rate is varible. 
 

@@ -8,7 +8,7 @@ from rotor_design.bearing import BEARING_TYPES, GAS, TWO_CENTER_PIVOT, pivot_con
 from rotor_design.drag import cold_support_shear_torque, rotor_windage
 from rotor_design.gas import GASES, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
-from rotor_design.materials import ZIRCONIA
+from rotor_design.materials import HELIUM4_CURVE_K, ZIRCONIA, helium_vapour_pressure
 from rotor_design.nozzle import ThroatSearchRangeError, nozzle_flow
 from rotor_design.rotordynamics import (first_bending_mode_hz, half_frequency_whirl_threshold_hz,
                                         rigid_body_critical_speeds_hz, rotor_mass_properties)
@@ -91,7 +91,7 @@ class Design:
     turbine: str | None = None
     hub_exit_diameter_mm: float | None = None   # Radial-Inflow only
     exhaust_path: str | None = None
-    back_pressure_bar: float | None = None      # Ducted only; Vented takes the environment pressure
+    back_pressure_bar: float | None = None      # Ducted only; Vented takes the Cold Space pressure
 
 
 @dataclass(frozen=True)
@@ -111,6 +111,9 @@ class Results:
     nozzle_angle_deg: float
     drive_gas: str
     environment_gas: str            # the gas the Rotor turns in
+    bath_temperature_k: float       # every sink: Bath, Cold Support, Vapour Cooling
+    sample_limit_temperature_k: float
+    cold_space_pressure_torr: float  # the Bath vapour pressure at the Bath Temperature
     drive_gas_temperature_k: float
     spin_rate_hz: float
     exhaust_path: str
@@ -154,7 +157,7 @@ class Results:
     sample_heat_load_w: float
     sample_heat_load_breakdown_w: dict
     exhaust_heat_to_bath_w: float   # Vented Drive Gas cooled to Bath vapour; 0 when Ducted
-    pumping_speed_m3_s: float       # to hold the environment pressure against the Vented gas; nan when Ducted
+    pumping_speed_m3_s: float       # to hold the Cold Space pressure against the Vented gas; nan when Ducted
     bath_heat_load_w: float
     rotor_mass_kg: float            # zirconia only; the Sample is not included
     peak_hoop_stress_mpa: float
@@ -225,7 +228,12 @@ def evaluate(design, assumptions):
     if exhaust_path not in EXHAUST_PATHS:
         raise ValueError(f"Unknown Exhaust Path {exhaust_path!r}; expected one of {EXHAUST_PATHS}")
     # The Rotor always turns in the Bath vapour; only the turbine exit sees a return line.
-    vapour_p = a.environment_pressure_torr * PA_PER_TORR
+    bath_t, sample_limit_k = a.bath_temperature_k, a.sample_limit_temperature_k
+    if sample_limit_k <= bath_t:
+        raise ValueError(f"Sample Limit Temperature {sample_limit_k} K must lie above the "
+                         f"{bath_t} K Bath Temperature, the coldest sink")
+    vapour_p = _cold_space_pressure(environment_gas, bath_t, a.cold_space_pressure_pa)
+    stator_t = _or(a.stator_temperature_k, bath_t)
     if exhaust_path == VENTED:
         back_p = vapour_p
     else:
@@ -240,7 +248,7 @@ def evaluate(design, assumptions):
     windage = rotor_windage(radius_m, a.rotor_stator_gap_mm / 1e3, spin,
                             turbine_cap_length_m=a.turbine_cap_height_mm / 1e3, drive_gas_temperature_k=gas_t,
                             back_pressure_pa=back_p, body_length_m=body_length_mm / 1e3,
-                            vapour_temperature_k=a.environment_temperature_k, vapour_pressure_pa=vapour_p,
+                            vapour_temperature_k=bath_t, vapour_pressure_pa=vapour_p,
                             accommodation=a.accommodation_coefficient, drive_gas=drive_gas,
                             vapour_gas=environment_gas)
     cap_windage_torque = windage.turbine_cap.torque_n_m * a.windage_torque_multiplier
@@ -248,7 +256,7 @@ def evaluate(design, assumptions):
     windage_torque_n_m = cap_windage_torque + body_windage_torque
     if cooling_path == COLD_SUPPORT:
         cold_gap_mm = _or(design.cold_support_gap_mm, a.cold_support_gap_mm)
-        cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, a.environment_temperature_k,
+        cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, bath_t,
                                                 vapour_p, a.accommodation_coefficient,
                                                 environment_gas).torque_n_m
     else:
@@ -261,7 +269,7 @@ def evaluate(design, assumptions):
         rotor_radius_m=radius_m,
         rotor_weight_n=body.mass_kg * STANDARD_GRAVITY,
         spin_rate_hz=spin,
-        bath_temperature_k=a.environment_temperature_k,
+        bath_temperature_k=bath_t,
         ambient_pressure_pa=vapour_p,
         accommodation=a.accommodation_coefficient,
         gas=drive_gas,
@@ -304,14 +312,14 @@ def evaluate(design, assumptions):
         sample_internal_heat_load_w=sample_q,
         # The Turbine Cap sits in the Drive Gas stream; taken at its supply temperature (upper bound).
         turbine_cap_temperature_k=gas_t,
-        bath_temperature_k=a.environment_temperature_k,
-        stator_temperature_k=a.stator_temperature_k,
+        bath_temperature_k=bath_t,
+        stator_temperature_k=stator_t,
         vapour_pressure_pa=vapour_p,
         gap_m=a.rotor_stator_gap_mm / 1e3,
         accommodation=a.accommodation_coefficient,
         emissivity=a.rotor_emissivity,
         windage_heat_per_length_w_m=windage_heat,
-        sample_zone_delta_t_k=a.sample_zone_delta_t_k,
+        sample_limit_temperature_k=sample_limit_k,
         # The Rotor's surroundings, Vented Drive Gas included, take the environment gas.
         gap_heat_transfer_coefficient=partial(gap_heat_transfer_coefficient, gas=environment_gas),
         cold_support_gap_m=None if cooling_path == VAPOUR_ONLY else cold_gap_mm / 1e3,
@@ -319,14 +327,14 @@ def evaluate(design, assumptions):
         bearing_friction_heat_w=bearing_load.bottom_friction_heat_w,
         bearing_gas_heat_w=bearing_load.bottom_gas_heat_w,
         pivot_conductance=(lambda t: pivot_contact_conductance(bearing_load.contact_radius_m, t,
-                                                               a.environment_temperature_k,
+                                                               bath_t,
                                                                a.zirconia_conductivity_multiplier))
         if pivot_to_bath else None,
         vented_gas_temperature_k=gas_t if exhaust_path == VENTED else None,
     )
     sample_zone_mm = thermal.sample_zone_m * 1e3
 
-    # Bath Heat Load, with the Stator at Bath temperature: all drag work ends there as heat.
+    # Bath Heat Load, with the Stator at Bath Temperature: all drag work ends there as heat.
     drag_power = drag_torque * 2.0 * math.pi * spin
     sources_w = drag_power + bearing_load.bottom_gas_heat_w + sample_q
     if exhaust_path == VENTED:
@@ -334,16 +342,15 @@ def evaluate(design, assumptions):
         # Rotor and the Turbine Cap conduction, which it supplies.
         if math.isfinite(mass_flow):
             h0, _ = stagnation_state(gas_t, supply_p, drive_gas)
-            exhaust_heat = (mass_flow * (h0 - vapour_enthalpy(a.environment_temperature_k, vapour_p, drive_gas))
+            exhaust_heat = (mass_flow * (h0 - vapour_enthalpy(bath_t, vapour_p, drive_gas))
                             - drag_power)
         else:
             exhaust_heat = math.inf
-        pumping_speed = mass_flow * drive_gas.specific_gas_constant * a.environment_temperature_k / vapour_p
+        pumping_speed = mass_flow * drive_gas.specific_gas_constant * bath_t / vapour_p
         bath_load = sources_w + exhaust_heat
     else:
         exhaust_heat, pumping_speed = 0.0, math.nan
         bath_load = sources_w + thermal.turbine_cap_heat_in_w
-    sample_limit_k = a.environment_temperature_k + a.sample_zone_delta_t_k
 
     stress = rotating_tube_stress(radius_m, inner_radius_m, spin, ZIRCONIA.density_kg_m3, ZIRCONIA.poissons_ratio)
     safety_factor = ZIRCONIA.tensile_strength_pa / stress.peak_hoop_pa if stress.peak_hoop_pa > 0.0 else math.inf
@@ -368,7 +375,9 @@ def evaluate(design, assumptions):
         "Critical Speed": (separation - a.critical_speed_separation) / a.critical_speed_separation,
         "Whirl": whirl / whirl_limit_hz - 1.0 if math.isfinite(whirl) else math.inf,
         "Sample Zone": (sample_zone_mm - a.min_sample_zone_mm) / a.min_sample_zone_mm,
-        "Sample Temperature": (sample_limit_k - thermal.sample_hottest_temperature_k) / a.sample_zone_delta_t_k,
+        # Fraction of the headroom between the Bath and the Sample Limit Temperature left unused.
+        "Sample Temperature": ((sample_limit_k - thermal.sample_hottest_temperature_k)
+                               / (sample_limit_k - bath_t)),
         "Bath Heat Load": (a.bath_cooling_power_w - bath_load) / a.bath_cooling_power_w,
     }
     assert tuple(margins) == CONSTRAINTS
@@ -395,6 +404,9 @@ def evaluate(design, assumptions):
         nozzle_angle_deg=angle_deg,
         drive_gas=drive_gas.name,
         environment_gas=environment_gas.name,
+        bath_temperature_k=bath_t,
+        sample_limit_temperature_k=sample_limit_k,
+        cold_space_pressure_torr=vapour_p / PA_PER_TORR,
         drive_gas_temperature_k=gas_t,
         spin_rate_hz=spin,
         exhaust_path=exhaust_path,
@@ -457,6 +469,23 @@ def evaluate(design, assumptions):
                   and not whirl < whirl_limit_hz),
         binding_constraint=binding,
     )
+
+
+def _cold_space_pressure(gas, bath_temperature_k, override_pa):
+    """Cold Space pressure (Pa): the helium-4 vapour pressure at the Bath Temperature.
+
+    A warm case not above a helium-4 Bath (a Benchmark Case or toy model) sets its own.
+    """
+    on_curve = gas.name == "helium" and bath_temperature_k <= HELIUM4_CURVE_K[1]
+    if override_pa is None:
+        if not on_curve:
+            raise ValueError(f"No helium-4 Bath at {bath_temperature_k} K in {gas.name}: "
+                             "set the Cold Space pressure for this warm case")
+        return helium_vapour_pressure(bath_temperature_k)
+    if on_curve:
+        raise ValueError(f"The Cold Space pressure follows from the {bath_temperature_k} K Bath Temperature "
+                         "on the helium-4 vapour-pressure curve; it cannot also be set")
+    return override_pa
 
 
 def _required_supply_pressure(drive, drag_torque, back_pressure, ceiling):

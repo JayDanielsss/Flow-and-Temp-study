@@ -12,6 +12,7 @@ from rotor_design.drag import windage_torque
 from rotor_design.evaluate import (COLD_SUPPORT, DUCTED, PA_PER_TORR, VAPOUR_ONLY, VENTED, Design,
                                   configurations, evaluate)
 from rotor_design.gas import R_HELIUM, stagnation_state, vapour_enthalpy
+from rotor_design.materials import helium_vapour_pressure
 from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
@@ -24,7 +25,6 @@ def assumptions():
 
 def test_assumptions_file_holds_spec_placeholders(assumptions):
     a = assumptions
-    assert a.sample_zone_delta_t_k == 0.1
     assert a.min_sample_zone_mm == 5.0
     assert a.bath_cooling_power_w == 0.100
     assert a.stator_allowance.wall == 1.5
@@ -32,8 +32,8 @@ def test_assumptions_file_holds_spec_placeholders(assumptions):
     assert a.stator_allowance.housing_above_turbine_cap == 3.0
     assert a.stator_allowance.cold_support_plate == 2.0
     assert a.stator_allowance.probe_wall_clearance == 0.5
-    assert a.environment_temperature_k == 1.2
-    assert a.environment_pressure_torr == 0.2
+    assert a.bath_temperature_k == 1.0
+    assert a.sample_limit_temperature_k == 1.2
     assert a.drive_gas_temperature_k == 10.0
     assert a.max_supply_pressure_bar == 3.77
     assert a.sample_internal_heat_load_w == 0.0
@@ -41,6 +41,55 @@ def test_assumptions_file_holds_spec_placeholders(assumptions):
     assert a.bore_diameter_mm == 30.0
     assert a.max_rotor_length_mm == 20.0
     assert a.tilt_angle_deg == pytest.approx(54.74, abs=0.005)
+
+
+def test_old_environment_pair_and_delta_t_are_gone(assumptions):
+    for old in ("environment_temperature_k", "environment_pressure_torr", "sample_zone_delta_t_k"):
+        assert not hasattr(assumptions, old)
+
+
+def test_cold_space_pressure_follows_the_bath_temperature_on_the_vapour_pressure_curve(assumptions):
+    # Bath at 1.0 K: 15.58 Pa = 0.117 Torr (Donnelly & Barenghi 1998, Table 17.3).
+    r = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert r.bath_temperature_k == 1.0
+    assert r.sample_limit_temperature_k == 1.2
+    assert r.cold_space_pressure_torr == pytest.approx(helium_vapour_pressure(1.0) / PA_PER_TORR)
+    assert r.cold_space_pressure_torr == pytest.approx(0.117, abs=1e-3)
+    warmer = evaluate(Design(rotor_length_mm=20.0), replace(assumptions, bath_temperature_k=1.1))
+    assert warmer.cold_space_pressure_torr == pytest.approx(38.02 / PA_PER_TORR, rel=1e-3)
+
+
+def test_a_cold_space_pressure_set_against_the_helium_bath_is_rejected(assumptions):
+    # On the helium-4 curve the pressure follows from the Bath Temperature; it cannot also be set.
+    with pytest.raises(ValueError, match="Bath Temperature"):
+        evaluate(Design(rotor_length_mm=20.0), replace(assumptions, cold_space_pressure_pa=26.7))
+
+
+def test_sample_limit_at_or_below_the_bath_is_rejected(assumptions):
+    with pytest.raises(ValueError, match="Sample Limit Temperature"):
+        evaluate(Design(rotor_length_mm=20.0), replace(assumptions, sample_limit_temperature_k=1.0))
+
+
+def test_lower_bath_temperature_gives_a_colder_sample(assumptions):
+    # Every sink (Bath, Cold Support, Vapour Cooling) sits at the Bath Temperature, so 0.1 K off
+    # the Bath takes most of 0.1 K off the Sample. (Helium transport data start at 1.0 K.)
+    for cooling_path in (VAPOUR_ONLY, COLD_SUPPORT):
+        design = Design(rotor_length_mm=20.0, cooling_path=cooling_path)
+        warm, cold = (evaluate(design, replace(assumptions, bath_temperature_k=t)).sample_hottest_temperature_k
+                      for t in (1.1, 1.0))
+        assert warm > cold + 0.05
+
+
+def test_sample_limit_sets_feasibility_and_sample_zone_but_not_the_temperatures(assumptions):
+    design = Design(rotor_length_mm=20.0)
+    base = evaluate(design, assumptions)
+    # A limit just below the hottest point, still above the Bath: same profile, now infeasible.
+    tight = evaluate(design, replace(assumptions,
+                                     sample_limit_temperature_k=(1.0 + base.sample_hottest_temperature_k) / 2.0))
+    assert tight.temperature_k == base.temperature_k
+    assert tight.sample_zone_mm < base.sample_zone_mm
+    assert not tight.feasible
+    assert tight.binding_constraint in ("Sample Zone", "Sample Temperature")
 
 
 def test_20mm_rotor_at_largest_diameter_fits_bore_and_is_feasible(assumptions):
@@ -141,11 +190,11 @@ def test_baseline_reports_temperature_profile_sample_zone_and_heat_load(assumpti
     results = evaluate(Design(rotor_length_mm=20.0), assumptions)
     t = results.temperature_k
     assert len(results.z_mm) == len(t)
-    assert min(t) >= 1.2 - 1e-9
+    assert min(t) >= 1.0 - 1e-9
     # The fin base is the Turbine Cap, held at the Drive Gas temperature.
     assert t[-1] == pytest.approx(10.0)
     assert 5.0 <= results.sample_zone_mm <= 20.0
-    assert results.sample_hottest_temperature_k <= 1.3
+    assert results.sample_hottest_temperature_k <= 1.2
     assert set(results.sample_heat_load_breakdown_w) == HEAT_SOURCES
     assert results.sample_heat_load_w == pytest.approx(sum(results.sample_heat_load_breakdown_w.values()))
     assert results.sample_heat_load_breakdown_w["turbine_cap_conduction"] > 0.0
@@ -162,13 +211,13 @@ def test_rotor_too_short_for_5mm_sample_zone_is_ruled_out(assumptions):
 
 def test_internal_load_in_poor_conductor_overheats_sample(assumptions):
     # Centre-to-wall rise of a uniformly heated cylinder: Q / (4 pi k L)
-    #   = 1e-5 W / (4 pi * 1e-5 W/(m K) * 5e-3 m) = 15.9 K, far above 1.3 K,
+    #   = 1e-5 W / (4 pi * 1e-5 W/(m K) * 5e-3 m) = 15.9 K, far above 1.2 K,
     # while 10 uW barely warms the wall, so the Sample Zone itself survives.
     design = Design(rotor_length_mm=20.0, sample_internal_heat_load_w=1e-5,
                     sample_conductivity_w_m_k=1e-5)
     results = evaluate(design, assumptions)
     assert results.sample_zone_mm >= 5.0
-    assert results.sample_hottest_temperature_k > 1.2 + 15.0
+    assert results.sample_hottest_temperature_k > 1.0 + 15.0
     assert not results.feasible
     assert results.binding_constraint == "Sample Temperature"
 
@@ -221,7 +270,7 @@ def test_windage_has_a_turbine_cap_term_in_drive_gas_and_a_body_term_in_vapour(a
     r = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=8.0, back_pressure_bar=1.0), assumptions)
     assert r.turbine_cap_windage_torque_n_m == pytest.approx(1.65328e-7, rel=1e-3)
     assert r.turbine_cap_windage_regime == "continuum"
-    vapour = windage_torque(4e-3, 17e-3, 0.1e-3, 1000.0, 1.2, 0.2 * PA_PER_TORR)
+    vapour = windage_torque(4e-3, 17e-3, 0.1e-3, 1000.0, 1.0, helium_vapour_pressure(1.0))
     assert r.body_windage_torque_n_m == pytest.approx(vapour.torque_n_m, rel=1e-12)
     assert r.windage_regime == vapour.regime
     assert r.drag_torque_n_m == pytest.approx(r.turbine_cap_windage_torque_n_m + r.body_windage_torque_n_m
@@ -230,9 +279,9 @@ def test_windage_has_a_turbine_cap_term_in_drive_gas_and_a_body_term_in_vapour(a
 
 
 def test_body_windage_heat_goes_to_the_body_and_cap_heat_is_counted_at_the_turbine_cap(assumptions):
-    # A 20 K Sample Zone margin takes in the whole 17 mm body, so the zone collects every bit of
+    # A 21 K Sample Limit Temperature takes in the whole 17 mm body, so the zone collects every bit of
     # windage heat applied below the Turbine Cap; at the placeholder fraction of 1 that is all of it.
-    wide = replace(assumptions, sample_zone_delta_t_k=20.0)
+    wide = replace(assumptions, sample_limit_temperature_k=21.0)
     r = evaluate(Design(rotor_length_mm=20.0), wide)
     omega = 2.0 * math.pi * 1000.0
     assert r.sample_zone_mm == pytest.approx(17.0)
@@ -245,8 +294,8 @@ def test_turbine_cap_windage_changes_the_drive_but_not_the_sample(assumptions):
     # only the gas the Turbine Cap turns in. Helium is the more viscous at 300 K (19.9 against
     # 17.9 uPa s), so its cap drag and drive flow differ, while the Turbine Cap stays at 300 K and
     # the Sample sees exactly the same Rotor.
-    warm = replace(assumptions, environment_temperature_k=300.0, stator_temperature_k=300.0,
-                   environment_pressure_torr=760.0, environment_gas="nitrogen", bearing="mechanical")
+    warm = replace(assumptions, bath_temperature_k=300.0, sample_limit_temperature_k=300.1,
+                   cold_space_pressure_pa=760.0 * PA_PER_TORR, environment_gas="nitrogen", bearing="mechanical")
     design = Design(rotor_length_mm=20.0, drive_gas_temperature_k=300.0, exhaust_path=DUCTED,
                     back_pressure_bar=1.0)
     nitrogen = evaluate(replace(design, drive_gas="nitrogen"), warm)
@@ -321,7 +370,7 @@ def test_bearing_gas_colder_than_the_rotor_never_cools_it(assumptions):
     warm, cold = with_gas_at(10.0), with_gas_at(1.0)
     assert warm.sample_heat_load_breakdown_w["convection"] > 0.0
     assert cold.sample_heat_load_breakdown_w["convection"] == 0.0
-    assert min(cold.temperature_k) >= 1.2 - 1e-9
+    assert min(cold.temperature_k) >= 1.0 - 1e-9
 
 
 def test_only_the_mechanical_bearing_carries_a_warning(assumptions):
@@ -356,12 +405,12 @@ def test_configurations_cover_every_allowed_combination_and_no_excluded_one():
 
 
 def test_bottom_cap_warmed_by_lower_pivot_leaves_a_cold_sample_zone_above_it(assumptions):
-    # The solid zirconia Bottom Cap barely conducts at 1.2 K, so pivot friction warms its face
+    # The solid zirconia Bottom Cap barely conducts at 1 K, so pivot friction warms its face
     # above the limit while the Rotor above stays cold: the Sample Zone need not start at z = 0.
     r = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT), assumptions)
-    assert r.temperature_k[0] > 1.3
+    assert r.temperature_k[0] > 1.2
     assert r.sample_zone_mm >= 5.0
-    assert r.sample_hottest_temperature_k <= 1.3
+    assert r.sample_hottest_temperature_k <= 1.2
     assert r.feasible
     assert r.sample_heat_load_breakdown_w["bearing_friction"] > 0.0
     assert r.sample_heat_load_w == pytest.approx(sum(r.sample_heat_load_breakdown_w.values()))
@@ -413,8 +462,8 @@ def test_exhaust_path_is_part_of_the_configuration(assumptions):
     assert default.back_pressure_bar == assumptions.ducted_back_pressure_bar
     vented = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
     assert vented.exhaust_path == VENTED
-    # Vented: the turbine exits into the probe space at the Bath's 0.2 Torr.
-    assert vented.back_pressure_bar == pytest.approx(0.2 * PA_PER_TORR / 1e5)
+    # Vented: the turbine exits into the Cold Space, at the Bath vapour pressure of 15.58 Pa at 1.0 K.
+    assert vented.back_pressure_bar == pytest.approx(helium_vapour_pressure(1.0) / 1e5)
 
 
 def test_unknown_exhaust_path_is_rejected(assumptions):
@@ -433,8 +482,8 @@ def test_ducted_back_pressure_is_an_input_and_a_higher_one_needs_more_supply_pre
 def test_vented_reports_pumping_speed_to_hold_the_probe_space_pressure(assumptions):
     vented = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
     ducted = evaluate(Design(rotor_length_mm=20.0, exhaust_path=DUCTED), assumptions)
-    # Volume flow of the vented Drive Gas as vapour at 1.2 K and 0.2 Torr: m R T / p.
-    expected = vented.required_mass_flow_kg_s * R_HELIUM * 1.2 / (0.2 * PA_PER_TORR)
+    # Volume flow of the vented Drive Gas as vapour at the 1.0 K Bath and its 15.58 Pa: m R T / p.
+    expected = vented.required_mass_flow_kg_s * R_HELIUM * 1.0 / helium_vapour_pressure(1.0)
     assert vented.pumping_speed_m3_s == pytest.approx(expected)
     assert math.isnan(ducted.pumping_speed_m3_s)
     assert ducted.exhaust_heat_to_bath_w == 0.0
@@ -445,7 +494,7 @@ def test_vented_exhaust_heat_is_mass_flow_times_enthalpy_drop_to_the_bath(assump
     # turbine and is cooled to Bath vapour: Q = m (h0 - h_bath) - torque * omega.
     r = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
     h0, _ = stagnation_state(10.0, r.required_supply_pressure_bar * 1e5)
-    h_bath = vapour_enthalpy(1.2, 0.2 * PA_PER_TORR)
+    h_bath = vapour_enthalpy(1.0, helium_vapour_pressure(1.0))
     shaft_power = r.turbine_torque_n_m * 2.0 * math.pi * 1000.0
     assert r.exhaust_heat_to_bath_w == pytest.approx(r.required_mass_flow_kg_s * (h0 - h_bath) - shaft_power,
                                                      rel=1e-6)
@@ -560,8 +609,8 @@ def test_unknown_gas_is_rejected(assumptions):
 def test_warm_nitrogen_drive_needs_more_flow_than_helium_at_the_same_conditions(assumptions):
     # Room-temperature Rotor in nitrogen, Ducted to 1 bar. At the same torque a jet of the
     # heavier gas is slower (v ~ sqrt(R T)), so it needs more mass flow.
-    warm = replace(assumptions, environment_temperature_k=300.0, stator_temperature_k=300.0,
-                   environment_pressure_torr=760.0, environment_gas="nitrogen",
+    warm = replace(assumptions, bath_temperature_k=300.0, sample_limit_temperature_k=300.1,
+                   cold_space_pressure_pa=760.0 * PA_PER_TORR, environment_gas="nitrogen",
                    bearing="mechanical")
     design = Design(rotor_length_mm=20.0, drive_gas_temperature_k=300.0, exhaust_path=DUCTED,
                     back_pressure_bar=1.0)
@@ -595,15 +644,16 @@ def test_required_supply_pressure_beyond_the_limit_is_reported_infinite(assumpti
 
 
 # 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit,
-# re-recorded with the Turbine Cap windage term:
+# re-recorded with the Turbine Cap windage term, and again for the 1.0 K Bath Temperature (its
+# 0.117 Torr Cold Space pressure lowers the body windage; Vented gas is cooled to 1.0 K vapour):
 # (Rotor Length, Bearing, Exhaust Path, required Supply Pressure bar, mass flow kg/s, Bath Heat Load W,
 #  feasible, Binding Constraint).
 PINNED_10_K = [
-    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05395570418431529, 3.1354072417678866e-06, 0.013820842350981879,
+    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05390626284447204, 3.1156131337941946e-06, 0.013222708337157251,
      True, "Sample Temperature"),
-    (12.0, MECHANICAL, VENTED, 1.9937861190722548, 0.00023533663942239353, 9.982335384426733,
+    (12.0, MECHANICAL, VENTED, 1.992195065430556, 0.00023514175608474377, 10.218698466560578,
      False, "Sample Zone"),
-    (12.0, GAS, DUCTED, 0.35663706547284346, 4.088640926105233e-05, 0.24147719347565094,
+    (12.0, GAS, DUCTED, 0.3562988836600197, 4.084740685501619e-05, 0.24008093033143652,
      False, "Sample Zone"),
 ]
 
