@@ -9,6 +9,8 @@ import pytest
 
 from rotor_design import reference
 from rotor_design.assumptions import load_assumptions
+from rotor_design.evaluate import Design, evaluate
+from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW, TURBINE_TYPES
 from rotor_design.uncertainty import _get, mechanism_errors, sample_assumptions
 
 ASSUMPTIONS_FILE = Path(__file__).resolve().parents[1] / "assumptions.toml"
@@ -35,8 +37,18 @@ def _values(samples, name):
     return np.array([_get(s, name) for s in samples])
 
 
+def _turbine_efficiencies(samples, turbine):
+    """The efficiency each sample gives a Turbine type: the shared knob times that type's correction."""
+    return np.array([s.turbine_efficiency * s.turbine_efficiency_correction[turbine] for s in samples])
+
+
+def _logit(x):
+    return math.log(x / (1.0 - x))
+
+
 def test_no_sample_has_zero_turbine_efficiency_or_a_discharge_coefficient_above_one(samples):
-    assert _values(samples, "turbine_efficiency").min() > 0.0
+    for turbine in TURBINE_TYPES:
+        assert _turbine_efficiencies(samples, turbine).min() > 0.0
     assert _values(samples, "discharge_coefficient").max() <= 1.0
 
 
@@ -47,6 +59,11 @@ def test_every_sampled_input_lies_in_its_physical_range(assumptions, samples):
         low, high = assumptions.uncertainty_physical_range[name]
         values = _values(samples, name)
         assert np.all(values > low) and np.all(values <= high), name
+    # The Turbine knob is held to its range as each Turbine type uses it.
+    low, high = assumptions.uncertainty_physical_range["turbine_efficiency"]
+    for turbine in TURBINE_TYPES:
+        values = _turbine_efficiencies(samples, turbine)
+        assert np.all(values > low) and np.all(values <= high), turbine
 
 
 def test_windage_heat_fraction_is_sampled_from_half_to_all(assumptions, samples):
@@ -62,16 +79,21 @@ def test_bias_and_residual_come_from_the_reference_case_comparisons(assumptions,
     comparisons = [c for case in reference.load_cases(assumptions.reference_cases_dir)
                    for c in reference.compare(case, assumptions) if not c.skipped]
     for e in errors:
-        # ln(measured / predicted) of each comparison of the mechanism.
-        logs = [-math.log1p(c.model_form_error) for c in comparisons
-                if reference.QUANTITY_MECHANISM[c.quantity] == e.mechanism]
-        assert len(logs) == e.compared
-        assert e.bias_correction == pytest.approx(math.exp(np.mean(logs)))
-        if len(logs) > 1:
-            assert e.residual_spread == pytest.approx(np.std(logs, ddof=1))
+        rows = [c for c in comparisons if reference.QUANTITY_MECHANISM[c.quantity] == e.mechanism]
+        assert len(rows) == e.compared
+        if e.scale == "logit":
+            # logit(measured) - logit(predicted), both scaled to the knob's physical range.
+            low, high = assumptions.uncertainty_physical_range[e.knob]
+            shifts = [_logit((c.measured - low) / (high - low)) - _logit((c.predicted - low) / (high - low))
+                      for c in rows]
+        else:
+            shifts = [math.log(c.measured / c.predicted) for c in rows]  # ln(measured / predicted)
+        assert e.bias == pytest.approx(np.mean(shifts))
+        if len(shifts) > 1:
+            assert e.residual_spread == pytest.approx(np.std(shifts, ddof=1))
         else:
             # One comparison cannot tell the bias from scatter: the spread is the whole error.
-            assert e.residual_spread == pytest.approx(abs(logs[0]))
+            assert e.residual_spread == pytest.approx(abs(shifts[0]))
     by_mechanism = {e.mechanism: e for e in errors}
     # The signed biases the Reference Cases show: the model under-predicts the discharge
     # coefficient by about 19% and the Fluted Cap Turbine efficiency by about 52%.
@@ -81,23 +103,66 @@ def test_bias_and_residual_come_from_the_reference_case_comparisons(assumptions,
     assert by_mechanism["turbine"].residual_spread < 0.5 * by_mechanism["turbine"].rms_error
 
 
-def test_signed_bias_is_a_mean_correction_with_only_the_residual_as_spread(assumptions, errors, samples):
-    # Hold every input at its nominal value so the knob moves by the Model-Form Error alone.
+def _fixed_inputs(assumptions, **changes):
+    """Every input held at its nominal value, so a knob moves by the Model-Form Error alone."""
     fixed = {name: ("uniform", _get(assumptions, name), _get(assumptions, name))
              for name in assumptions.uncertainty_inputs}
-    a = replace(assumptions, uncertainty_inputs=fixed, uncertainty_samples=MANY_SAMPLES)
+    return replace(assumptions, uncertainty_inputs=fixed, uncertainty_samples=MANY_SAMPLES, **changes)
+
+
+def test_signed_bias_is_a_mean_correction_with_only_the_residual_as_spread(assumptions, errors):
+    a = _fixed_inputs(assumptions)
     fixed_samples = sample_assumptions(a, errors)
     for e in errors:
         nominal, high = _get(a, e.knob), a.uncertainty_physical_range[e.knob][1]
-        ratio = _values(fixed_samples, e.knob) / nominal
+        if e.knob == "turbine_efficiency":
+            values = _turbine_efficiencies(fixed_samples, FLUTED_CAP)
+        else:
+            values = _values(fixed_samples, e.knob)
         # The median is the corrected knob, unless that lies past its physical bound.
-        assert np.median(ratio) == pytest.approx(min(e.bias_correction, high / nominal), rel=0.02), e.mechanism
-        if _values(fixed_samples, e.knob).max() < high:
-            assert np.std(np.log(ratio)) == pytest.approx(e.residual_spread, rel=0.1), e.mechanism
-    # Over the input range, the corrected discharge coefficient goes past 1 and is capped there.
+        assert np.median(values) / nominal == pytest.approx(min(e.bias_correction, high / nominal),
+                                                            rel=0.02), e.mechanism
+        if values.max() < high:
+            shifts = np.log(values / nominal) if e.scale == "log" else [_logit(v) for v in values]
+            assert np.std(shifts) == pytest.approx(e.residual_spread, rel=0.1), e.mechanism
+
+
+def test_discharge_coefficient_is_corrected_on_a_bounded_scale_and_not_piled_at_one(assumptions, errors, samples):
     nozzle = next(e for e in errors if e.mechanism == "nozzle")
-    assert assumptions.uncertainty_inputs["discharge_coefficient"][2] * nozzle.bias_correction > 1.0
-    assert _values(samples, "discharge_coefficient").max() == 1.0
+    assert nozzle.scale == "logit"
+    # The correction still lifts the model's 0.8 to the measured ~0.99 (a -19% bias) ...
+    assert 1.0 / nozzle.bias_correction - 1.0 == pytest.approx(-0.19, abs=0.01)
+    # ... but on the logit scale it can never reach 1, where a multiplier capped 39% of samples.
+    values = _values(samples, "discharge_coefficient")
+    assert values.max() < 1.0
+    assert np.mean(values >= 0.999) < 0.02
+
+
+def test_each_turbine_type_takes_its_own_named_bias_correction(assumptions, errors):
+    turbine = next(e for e in errors if e.mechanism == "turbine")
+    # By default both Turbine types share the Reference Case value, the Fluted Cap's -52%.
+    assert assumptions.turbine_bias_correction == {FLUTED_CAP: "reference_cases", RADIAL_INFLOW: "reference_cases"}
+    # The model as built applies no correction outside the Monte Carlo.
+    assert assumptions.turbine_efficiency_correction == {FLUTED_CAP: 1.0, RADIAL_INFLOW: 1.0}
+    shared = sample_assumptions(_fixed_inputs(assumptions), errors)
+    high = assumptions.uncertainty_physical_range["turbine_efficiency"][1]
+    for t in TURBINE_TYPES:
+        assert np.median(_turbine_efficiencies(shared, t)) == pytest.approx(
+            min(turbine.bias_correction, high), rel=0.02)
+    # The Radial-Inflow value can be set on its own, leaving the Fluted Cap's as it was.
+    own = sample_assumptions(_fixed_inputs(assumptions, turbine_bias_correction={
+        FLUTED_CAP: "reference_cases", RADIAL_INFLOW: 1.2}), errors)
+    assert np.median(_turbine_efficiencies(own, RADIAL_INFLOW)) == pytest.approx(1.2, rel=0.02)
+    assert np.array_equal(_turbine_efficiencies(own, FLUTED_CAP), _turbine_efficiencies(shared, FLUTED_CAP))
+
+
+def test_turbine_efficiency_correction_scales_only_its_turbine_type(assumptions):
+    corrected = replace(assumptions, turbine_efficiency_correction={FLUTED_CAP: 1.0, RADIAL_INFLOW: 2.0})
+    for turbine, changes in ((FLUTED_CAP, False), (RADIAL_INFLOW, True)):
+        design = Design(rotor_length_mm=20.0, turbine=turbine)
+        before = evaluate(design, assumptions).required_mass_flow_kg_s
+        after = evaluate(design, corrected).required_mass_flow_kg_s
+        assert (after < before) if changes else (after == before), turbine
 
 
 def test_an_input_range_outside_its_physical_range_is_refused(assumptions, errors):

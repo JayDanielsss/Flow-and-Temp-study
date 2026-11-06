@@ -61,6 +61,9 @@ max_supply_pressure_bar = 3.77 # absolute; 40 psig at the room-temperature regul
 target_spin_rate_hz = 1000.0
 discharge_coefficient = 0.8    # placeholder, no source yet
 turbine_efficiency = 1.0       # placeholder: ideal Euler torque, losses not yet included
+# Turbine type -> factor on turbine_efficiency. 1 is the model as built; the Monte Carlo replaces
+# it with [uncertainty.turbine_bias_correction].
+turbine_efficiency_correction = { fluted_cap = 1.0, radial_inflow = 1.0 }
 
 [exhaust]
 # Exhaust Path: "vented" (into the probe space; Back Pressure is the environment pressure)
@@ -142,10 +145,11 @@ zirconia_conductivity_multiplier = 1.0  # Input Uncertainty range x0.3 to x3
 
 [uncertainty]
 # Monte Carlo over the Input Uncertainty, on the top-ranked Designs of the full study.
-# Each sample draws every input below, then multiplies the knob of each Reference Case mechanism
-# by a lognormal Model-Form Error factor: its median is the signed bias the Reference Cases show
-# (measured over predicted, geometric mean), its log standard deviation only the residual about
-# that bias. The knob is then held to its physical range.
+# Each sample draws every input below, then shifts the knob of each Reference Case mechanism by
+# its Model-Form Error on the mechanism's scale ([uncertainty.model_form_scale]): the shift's mean
+# is the signed bias the Reference Cases show, its standard deviation only the residual about that
+# bias. On the "log" scale this is a lognormal factor on the knob. The knob is then held to its
+# physical range.
 samples = 200
 seed = 1
 designs = 10                   # top-ranked Designs (Feasible first) given bands
@@ -170,6 +174,21 @@ windage = "windage_torque_multiplier"
 rarefied_drag = "accommodation_coefficient"
 turbine = "turbine_efficiency"
 conduction = "zirconia_conductivity_multiplier"
+
+# Reference Case mechanism -> scale its Model-Form Error is taken and applied on. "log" (the default):
+# ln(measured / predicted), a lognormal factor. "logit": logit(measured) - logit(predicted), both
+# scaled to the knob's physical range, which keeps a knob bounded above off its bound. R1 measures
+# the discharge coefficient near 0.99, so a factor on it would pile the samples at the cap of 1.
+[uncertainty.model_form_scale]
+nozzle = "logit"
+
+# Turbine type -> the bias correction its efficiency takes in the Monte Carlo, on top of the
+# residual spread of the turbine mechanism. "reference_cases": the bias derived from the Turbine
+# Reference Case (R4, x2.1 for a -52% Model-Form Error); or a number. R4 is a bladed impulse wheel,
+# evidence for the Fluted Cap only: the Radial-Inflow shares its value until it has its own.
+[uncertainty.turbine_bias_correction]
+fluted_cap = "reference_cases"
+radial_inflow = "reference_cases"
 
 # Physical range (low, high] of every uncertain input and knob: a range above is refused if it
 # leaves it, and a Model-Form Error factor that takes a knob past high is capped at high.

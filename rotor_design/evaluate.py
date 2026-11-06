@@ -242,7 +242,8 @@ def evaluate(design, assumptions):
     def drive(supply_p):
         flow = nozzle_flow(supply_p, gas_t, back_p, throat_mm / 1e3, a.discharge_coefficient, drive_gas)
         torque = nozzle_count * turbine_model.torque(flow.mass_flow_kg_s, flow.jet_velocity_m_s, angle_deg,
-                                                     radius_m, spin, a.turbine_efficiency)
+                                                     radius_m, spin,
+                                                     a.turbine_efficiency * a.turbine_efficiency_correction[turbine])
         return flow, torque
 
     supply_p = _required_supply_pressure(drive, drag_torque, back_p,
