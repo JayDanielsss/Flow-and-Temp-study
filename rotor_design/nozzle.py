@@ -10,6 +10,10 @@ _SEARCH_ITERATIONS = 40  # brackets the peak to 1e-8 of p0
 _MIN_THROAT_RATIO = 0.2
 
 
+class ThroatSearchRangeError(ValueError):
+    """The isentropic mass-flux peak lies below the throat search range (e.g. a liquid-like supply)."""
+
+
 @dataclass(frozen=True)
 class NozzleFlow:
     mass_flow_kg_s: float
@@ -51,7 +55,7 @@ def nozzle_flow(supply_pressure_pa, supply_temperature_k, back_pressure_pa, thro
             fa = flux_and_velocity(a)[0]
     p_peak = (lo + hi) / 2.0
     if back_pressure_pa < throat_floor and p_peak - throat_floor < 1e-6 * supply_pressure_pa:
-        raise ValueError("Mass-flux peak below the throat search range; widen _MIN_THROAT_RATIO")
+        raise ThroatSearchRangeError("Mass-flux peak below the throat search range; widen _MIN_THROAT_RATIO")
 
     choked = p_peak - back_pressure_pa > 1e-6 * (supply_pressure_pa - back_pressure_pa)
     throat_p = p_peak if choked else back_pressure_pa
