@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 
 from rotor_design.bearing import BEARING_TYPES, GAS, TWO_CENTER_PIVOT, pivot_contact_conductance
-from rotor_design.drag import cold_support_shear_torque, windage_torque
+from rotor_design.drag import cold_support_shear_torque, rotor_windage
 from rotor_design.gas import GASES, gap_heat_transfer_coefficient, stagnation_state, vapour_enthalpy
 from rotor_design.geometry import max_rotor_diameter, projected_width
 from rotor_design.materials import ZIRCONIA
@@ -111,8 +111,12 @@ class Results:
     turbine_torque_n_m: float
     turbine_torque_per_flow_n_m_s_kg: float
     drag_torque_n_m: float          # windage, Cold Support gap shear and Bearing friction
-    windage_regime: str
-    knudsen_number: float
+    turbine_cap_windage_torque_n_m: float  # Turbine Cap section, in Drive Gas at the Back Pressure
+    turbine_cap_windage_regime: str
+    turbine_cap_windage_heat_w: float      # into the Turbine Cap, held at Drive Gas temperature; not the body
+    body_windage_torque_n_m: float  # body below the Turbine Cap, in the vapour
+    windage_regime: str             # body section
+    knudsen_number: float           # body section
     wall_thickness_mm: float
     sample_length_mm: float
     sample_conductivity_w_m_k: float
@@ -211,10 +215,17 @@ def evaluate(design, assumptions):
     cooling_path = _or(design.cooling_path, a.cooling_path)
     if cooling_path not in COOLING_PATHS:
         raise ValueError(f"Unknown cooling path {cooling_path!r}; expected one of {COOLING_PATHS}")
-    windage = windage_torque(radius_m, design.rotor_length_mm / 1e3, a.rotor_stator_gap_mm / 1e3, spin,
-                             a.environment_temperature_k, vapour_p, a.accommodation_coefficient,
-                             environment_gas)
-    windage_torque_n_m = windage.torque_n_m * a.windage_torque_multiplier
+    # The Turbine Cap turns in Drive Gas at its supply temperature and the Back Pressure,
+    # the body below it in the vapour; both across the same gap to the Stator.
+    windage = rotor_windage(radius_m, a.rotor_stator_gap_mm / 1e3, spin,
+                            turbine_cap_length_m=a.turbine_cap_height_mm / 1e3, drive_gas_temperature_k=gas_t,
+                            back_pressure_pa=back_p, body_length_m=body_length_mm / 1e3,
+                            vapour_temperature_k=a.environment_temperature_k, vapour_pressure_pa=vapour_p,
+                            accommodation=a.accommodation_coefficient, drive_gas=drive_gas,
+                            vapour_gas=environment_gas)
+    cap_windage_torque = windage.turbine_cap.torque_n_m * a.windage_torque_multiplier
+    body_windage_torque = windage.body.torque_n_m * a.windage_torque_multiplier
+    windage_torque_n_m = cap_windage_torque + body_windage_torque
     if cooling_path == COLD_SUPPORT:
         cold_gap_mm = _or(design.cold_support_gap_mm, a.cold_support_gap_mm)
         cold_torque = cold_support_shear_torque(radius_m, cold_gap_mm / 1e3, spin, a.environment_temperature_k,
@@ -256,8 +267,11 @@ def evaluate(design, assumptions):
     sample_mm = _or(design.sample_length_mm, a.baseline_sample_length_mm)
     sample_k = _or(design.sample_conductivity_w_m_k, a.sample_conductivity_w_m_k)
     sample_q = _or(design.sample_internal_heat_load_w, a.sample_internal_heat_load_w)
-    windage_heat = (windage_torque_n_m * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
-                    / (design.rotor_length_mm / 1e3))
+    # The body's windage heat is spread over the body alone. The cap's is taken up at the Turbine
+    # Cap, which the Drive Gas holds at its temperature, so it does not reach the body.
+    windage_heat = (body_windage_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
+                    / (body_length_mm / 1e3))
+    cap_windage_heat = cap_windage_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
     thermal = rotor_thermal(
         outer_radius_m=radius_m,
         wall_m=wall_mm / 1e3,
@@ -371,8 +385,12 @@ def evaluate(design, assumptions):
         turbine_torque_n_m=turbine_torque,
         turbine_torque_per_flow_n_m_s_kg=turbine_torque / mass_flow if math.isfinite(mass_flow) else math.nan,
         drag_torque_n_m=drag_torque,
-        windage_regime=windage.regime,
-        knudsen_number=windage.knudsen_number,
+        turbine_cap_windage_torque_n_m=cap_windage_torque,
+        turbine_cap_windage_regime=windage.turbine_cap.regime,
+        turbine_cap_windage_heat_w=cap_windage_heat,
+        body_windage_torque_n_m=body_windage_torque,
+        windage_regime=windage.body.regime,
+        knudsen_number=windage.body.knudsen_number,
         wall_thickness_mm=wall_mm,
         sample_length_mm=sample_mm,
         sample_conductivity_w_m_k=sample_k,

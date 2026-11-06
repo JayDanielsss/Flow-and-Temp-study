@@ -41,6 +41,32 @@ def windage_torque(radius_m, length_m, gap_m, spin_rate_hz, temperature_k, press
     return _in_regime(torque, temperature_k, pressure_pa, gap_m, gas)
 
 
+@dataclass(frozen=True)
+class RotorWindage:
+    turbine_cap: Windage   # the Turbine Cap section, in Drive Gas
+    body: Windage          # the body below it, in Cold Space vapour
+
+    @property
+    def torque_n_m(self):
+        return self.turbine_cap.torque_n_m + self.body.torque_n_m
+
+
+def rotor_windage(radius_m, gap_m, spin_rate_hz, *, turbine_cap_length_m, drive_gas_temperature_k,
+                  back_pressure_pa, body_length_m, vapour_temperature_k, vapour_pressure_pa, accommodation=1.0,
+                  drive_gas=HELIUM, vapour_gas=HELIUM):
+    """Windage on the whole Rotor, split at the Turbine Cap.
+
+    The Turbine Cap turns in Drive Gas at its temperature and the Back Pressure, the body
+    below it in the Cold Space vapour; each section is a windage_torque over its own length.
+    """
+    return RotorWindage(
+        windage_torque(radius_m, turbine_cap_length_m, gap_m, spin_rate_hz, drive_gas_temperature_k,
+                       back_pressure_pa, accommodation, drive_gas),
+        windage_torque(radius_m, body_length_m, gap_m, spin_rate_hz, vapour_temperature_k, vapour_pressure_pa,
+                       accommodation, vapour_gas),
+    )
+
+
 def cold_support_shear_torque(radius_m, gap_m, spin_rate_hz, temperature_k, pressure_pa, accommodation=1.0,
                               gas=HELIUM):
     """Drag torque on the Bottom Cap face turning a gap from the still Cold Support plate.

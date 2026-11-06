@@ -8,8 +8,9 @@ import pytest
 
 from rotor_design.assumptions import load_assumptions
 from rotor_design.bearing import GAS, MECHANICAL, MECHANICAL_WARNING, TWO_CENTER_PIVOT
-from rotor_design.evaluate import (COLD_SUPPORT, DUCTED, VAPOUR_ONLY, VENTED, Design, configurations,
-                                  evaluate)
+from rotor_design.drag import windage_torque
+from rotor_design.evaluate import (COLD_SUPPORT, DUCTED, PA_PER_TORR, VAPOUR_ONLY, VENTED, Design,
+                                  configurations, evaluate)
 from rotor_design.gas import R_HELIUM, stagnation_state, vapour_enthalpy
 from rotor_design.turbine import FLUTED_CAP, RADIAL_INFLOW
 
@@ -185,6 +186,52 @@ def test_cold_support_gap_shear_adds_to_drag_torque_and_sample_heat_load(assumpt
     shear_heat = cold.cold_support_drag_torque_n_m * 2.0 * math.pi * 1000.0
     assert cold.sample_heat_load_breakdown_w["cold_support_shear"] == pytest.approx(shear_heat)
     assert cold.cold_support_heat_to_bath_w > shear_heat
+
+
+def test_windage_has_a_turbine_cap_term_in_drive_gas_and_a_body_term_in_vapour(assumptions):
+    # 8 mm Rotor (r1 = 4 mm, 0.1 mm gap), Ducted to a 1 bar Back Pressure; the bore does not matter here.
+    # The 3 mm Turbine Cap turns in 10 K helium Drive Gas at the Back Pressure, at the Couette limit:
+    #   T = 4 pi mu L_cap omega r1^2 r2^2 / (r2^2 - r1^2), mu = 2.102 uPa s  ->  1.65328e-7 N m
+    # The 17 mm body below it turns in the 1.2 K, 0.2 Torr vapour.
+    r = evaluate(Design(rotor_length_mm=20.0, rotor_diameter_mm=8.0, back_pressure_bar=1.0), assumptions)
+    assert r.turbine_cap_windage_torque_n_m == pytest.approx(1.65328e-7, rel=1e-3)
+    assert r.turbine_cap_windage_regime == "continuum"
+    vapour = windage_torque(4e-3, 17e-3, 0.1e-3, 1000.0, 1.2, 0.2 * PA_PER_TORR)
+    assert r.body_windage_torque_n_m == pytest.approx(vapour.torque_n_m, rel=1e-12)
+    assert r.windage_regime == vapour.regime
+    assert r.drag_torque_n_m == pytest.approx(r.turbine_cap_windage_torque_n_m + r.body_windage_torque_n_m
+                                              + r.bearing_friction_torque_n_m, rel=1e-12)
+    assert r.turbine_torque_n_m == pytest.approx(r.drag_torque_n_m, rel=1e-3)
+
+
+def test_body_windage_heat_goes_to_the_body_and_cap_heat_is_counted_at_the_turbine_cap(assumptions):
+    # A 20 K Sample Zone margin takes in the whole 17 mm body, so the zone collects every bit of
+    # windage heat applied below the Turbine Cap; at the placeholder fraction of 1 that is all of it.
+    wide = replace(assumptions, sample_zone_delta_t_k=20.0)
+    r = evaluate(Design(rotor_length_mm=20.0), wide)
+    omega = 2.0 * math.pi * 1000.0
+    assert r.sample_zone_mm == pytest.approx(17.0)
+    assert r.sample_heat_load_breakdown_w["windage"] == pytest.approx(r.body_windage_torque_n_m * omega, rel=1e-9)
+    assert r.turbine_cap_windage_heat_w == pytest.approx(r.turbine_cap_windage_torque_n_m * omega, rel=1e-12)
+
+
+def test_turbine_cap_windage_changes_the_drive_but_not_the_sample(assumptions):
+    # Room-temperature Rotor in nitrogen, Ducted to 1 bar: a helium or nitrogen Drive Gas changes
+    # only the gas the Turbine Cap turns in. Helium is the more viscous at 300 K (19.9 against
+    # 17.9 uPa s), so its cap drag and drive flow differ, while the Turbine Cap stays at 300 K and
+    # the Sample sees exactly the same Rotor.
+    warm = replace(assumptions, environment_temperature_k=300.0, stator_temperature_k=300.0,
+                   environment_pressure_torr=760.0, environment_gas="nitrogen", bearing="mechanical")
+    design = Design(rotor_length_mm=20.0, drive_gas_temperature_k=300.0, exhaust_path=DUCTED,
+                    back_pressure_bar=1.0)
+    nitrogen = evaluate(replace(design, drive_gas="nitrogen"), warm)
+    helium = evaluate(replace(design, drive_gas="helium"), warm)
+    assert helium.turbine_cap_windage_torque_n_m > nitrogen.turbine_cap_windage_torque_n_m
+    assert helium.drag_torque_n_m > nitrogen.drag_torque_n_m
+    assert helium.body_windage_torque_n_m == nitrogen.body_windage_torque_n_m
+    assert helium.temperature_k == nitrogen.temperature_k
+    assert helium.sample_hottest_temperature_k == nitrogen.sample_hottest_temperature_k
+    assert helium.sample_heat_load_breakdown_w == nitrogen.sample_heat_load_breakdown_w
 
 
 def test_cold_support_gap_defaults_from_assumptions_file(assumptions):
@@ -496,7 +543,7 @@ def test_warm_nitrogen_drive_needs_more_flow_than_helium_at_the_same_conditions(
     nitrogen = evaluate(replace(design, drive_gas="nitrogen"), warm)
     helium = evaluate(replace(design, drive_gas="helium"), warm)
     assert nitrogen.drive_gas == "nitrogen" and nitrogen.environment_gas == "nitrogen"
-    assert nitrogen.drag_torque_n_m == helium.drag_torque_n_m  # same environment gas
+    assert nitrogen.body_windage_torque_n_m == helium.body_windage_torque_n_m  # same environment gas
     assert nitrogen.required_mass_flow_kg_s > helium.required_mass_flow_kg_s
 
 
@@ -522,15 +569,16 @@ def test_required_supply_pressure_beyond_the_limit_is_reported_infinite(assumpti
     assert math.isinf(results.required_mass_flow_kg_s)
 
 
-# 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit:
+# 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit,
+# re-recorded with the Turbine Cap windage term:
 # (Rotor Length, Bearing, Exhaust Path, required Supply Pressure bar, mass flow kg/s, Bath Heat Load W,
 #  feasible, Binding Constraint).
 PINNED_10_K = [
-    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05284175483992871, 2.6548135370310343e-06, 0.012988772449783654,
+    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05395570418431529, 3.1354072417678866e-06, 0.013820842350981879,
      True, "Sample Temperature"),
-    (12.0, MECHANICAL, VENTED, 1.9860705185706433, 0.00023439169476472776, 9.945341085226609,
+    (12.0, MECHANICAL, VENTED, 1.9937861190722548, 0.00023533663942239353, 9.982335384426733,
      False, "Sample Zone"),
-    (12.0, GAS, DUCTED, 0.34244619050309105, 3.925016347355051e-05, 0.23299656101835603,
+    (12.0, GAS, DUCTED, 0.35663706547284346, 4.088640926105233e-05, 0.24147719347565094,
      False, "Sample Zone"),
 ]
 
