@@ -569,15 +569,16 @@ def test_required_supply_pressure_beyond_the_limit_is_reported_infinite(assumpti
     assert math.isinf(results.required_mass_flow_kg_s)
 
 
-# 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit:
+# 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit,
+# re-recorded with the Turbine Cap windage term:
 # (Rotor Length, Bearing, Exhaust Path, required Supply Pressure bar, mass flow kg/s, Bath Heat Load W,
 #  feasible, Binding Constraint).
 PINNED_10_K = [
-    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05284175483992871, 2.6548135370310343e-06, 0.012988772449783654,
+    (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05395570418431529, 3.1354072417678866e-06, 0.013820842350981879,
      True, "Sample Temperature"),
-    (12.0, MECHANICAL, VENTED, 1.9860705185706433, 0.00023439169476472776, 9.945341085226609,
+    (12.0, MECHANICAL, VENTED, 1.9937861190722548, 0.00023533663942239353, 9.982335384426733,
      False, "Sample Zone"),
-    (12.0, GAS, DUCTED, 0.34244619050309105, 3.925016347355051e-05, 0.23299656101835603,
+    (12.0, GAS, DUCTED, 0.35663706547284346, 4.088640926105233e-05, 0.24147719347565094,
      False, "Sample Zone"),
 ]
 
