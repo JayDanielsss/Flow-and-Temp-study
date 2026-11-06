@@ -13,7 +13,7 @@ from rotor_design.nozzle import ThroatSearchRangeError, nozzle_flow
 from rotor_design.rotordynamics import (first_bending_mode_hz, half_frequency_whirl_threshold_hz,
                                         rigid_body_critical_speeds_hz, rotor_mass_properties)
 from rotor_design.stress import rotating_tube_stress
-from rotor_design.thermal import rotor_thermal
+from rotor_design.thermal import place_sample
 from rotor_design.turbine import RADIAL_INFLOW, TURBINE_TYPES
 
 # Slack for a Design that sits exactly on the bore limit (mm).
@@ -33,7 +33,7 @@ DUCTED = "ducted"
 EXHAUST_PATHS = (VENTED, DUCTED)
 STANDARD_GRAVITY = 9.80665
 # Every constraint, in build order; a Design that breaks several is ruled out by the first.
-CONSTRAINTS = ("Probe Bore", "Supply Pressure", "Stress", "Critical Speed", "Whirl", "Sample Zone",
+CONSTRAINTS = ("Probe Bore", "Supply Pressure", "Stress", "Critical Speed", "Whirl", "Placement Window",
                "Sample Temperature", "Bath Heat Load")
 # The physics constraints, which name what limits a Design that fits the Probe Bore.
 PHYSICS_CONSTRAINTS = CONSTRAINTS[1:]
@@ -82,6 +82,9 @@ class Design:
     drive_gas_temperature_k: float | None = None
     wall_thickness_mm: float | None = None
     sample_length_mm: float | None = None
+    # From the Bottom Cap face to the bottom of the Sample; None places it where the Sample Heat
+    # Load is lowest within the Placement Window.
+    sample_position_mm: float | None = None
     sample_conductivity_w_m_k: float | None = None
     sample_internal_heat_load_w: float | None = None
     cooling_path: str | None = None
@@ -136,6 +139,11 @@ class Results:
     knudsen_number: float           # body section
     wall_thickness_mm: float
     sample_length_mm: float
+    sample_position_mm: float       # from the Bottom Cap face to the bottom of the Sample
+    placement_window_low_mm: float  # lowest Sample Position keeping the whole Sample at or below the limit; nan if none
+    placement_window_high_mm: float  # highest such Sample Position; nan if none
+    bottom_standoff_mm: float       # least distance from the Bottom Cap face to the bottom of the Sample
+    turbine_cap_standoff_mm: float  # least distance from the top of the Sample to the Turbine Cap
     sample_conductivity_w_m_k: float
     sample_internal_heat_load_w: float
     sample_volume_mm3: float        # the Rotor bore over the Sample length
@@ -152,9 +160,9 @@ class Results:
     warning: str
     z_mm: tuple
     temperature_k: tuple
-    sample_zone_mm: float
+    sample_zone_mm: float           # diagnostic: longest stretch at or below the Sample Limit Temperature
     sample_hottest_temperature_k: float
-    sample_heat_load_w: float
+    sample_heat_load_w: float       # heat crossing the Sample's boundary at its Sample Position
     sample_heat_load_breakdown_w: dict
     exhaust_heat_to_bath_w: float   # Vented Drive Gas cooled to Bath vapour; 0 when Ducted
     pumping_speed_m3_s: float       # to hold the Cold Space pressure against the Vented gas; nan when Ducted
@@ -301,7 +309,10 @@ def evaluate(design, assumptions):
     windage_heat = (body_windage_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
                     / (body_length_mm / 1e3))
     cap_windage_heat = cap_windage_torque * 2.0 * math.pi * spin * a.windage_heat_to_rotor_fraction
-    thermal = rotor_thermal(
+    position_mm = design.sample_position_mm
+    placement = place_sample(
+        position_step_m=a.sample_position_step_mm / 1e3,
+        sample_position_m=None if position_mm is None else position_mm / 1e3,
         outer_radius_m=radius_m,
         wall_m=wall_mm / 1e3,
         body_length_m=body_length_mm / 1e3,
@@ -332,7 +343,9 @@ def evaluate(design, assumptions):
         if pivot_to_bath else None,
         vented_gas_temperature_k=gas_t if exhaust_path == VENTED else None,
     )
+    thermal = placement.thermal
     sample_zone_mm = thermal.sample_zone_m * 1e3
+    window_lo, window_hi = (edge * 1e3 for edge in placement.window_m)
 
     # Bath Heat Load, with the Stator at Bath Temperature: all drag work ends there as heat.
     drag_power = drag_torque * 2.0 * math.pi * spin
@@ -374,7 +387,8 @@ def evaluate(design, assumptions):
         "Stress": (safety_factor - a.required_safety_factor) / a.required_safety_factor,
         "Critical Speed": (separation - a.critical_speed_separation) / a.critical_speed_separation,
         "Whirl": whirl / whirl_limit_hz - 1.0 if math.isfinite(whirl) else math.inf,
-        "Sample Zone": (sample_zone_mm - a.min_sample_zone_mm) / a.min_sample_zone_mm,
+        # Headroom at the coolest Sample Position: negative exactly when the Placement Window is empty.
+        "Placement Window": placement.best_headroom_k / (sample_limit_k - bath_t),
         # Fraction of the headroom between the Bath and the Sample Limit Temperature left unused.
         "Sample Temperature": ((sample_limit_k - thermal.sample_hottest_temperature_k)
                                / (sample_limit_k - bath_t)),
@@ -429,6 +443,11 @@ def evaluate(design, assumptions):
         knudsen_number=windage.body.knudsen_number,
         wall_thickness_mm=wall_mm,
         sample_length_mm=sample_mm,
+        sample_position_mm=thermal.sample_position_m * 1e3,
+        placement_window_low_mm=window_lo,
+        placement_window_high_mm=window_hi,
+        bottom_standoff_mm=window_lo,
+        turbine_cap_standoff_mm=body_length_mm - a.bottom_cap_thickness_mm - sample_mm - window_hi,
         sample_conductivity_w_m_k=sample_k,
         sample_internal_heat_load_w=sample_q,
         sample_volume_mm3=math.pi * (inner_radius_m * 1e3) ** 2 * sample_mm,
@@ -461,7 +480,7 @@ def evaluate(design, assumptions):
         bending_critical_hz=bending,
         whirl_threshold_hz=whirl,
         critical_speed_separation=separation,
-        feasible=(fits and reaches_spin and sample_zone_mm >= a.min_sample_zone_mm
+        feasible=(fits and reaches_spin and not placement.empty
                   and thermal.sample_hottest_temperature_k <= sample_limit_k
                   and bath_load <= a.bath_cooling_power_w
                   and safety_factor >= a.required_safety_factor

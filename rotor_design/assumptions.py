@@ -50,7 +50,7 @@ class Assumptions:
     baseline_nozzle_angle_deg: float
     baseline_wall_thickness_mm: float
     baseline_sample_length_mm: float
-    min_sample_zone_mm: float
+    sample_position_step_mm: float  # Placement Window scan step
     bath_cooling_power_w: float
     sample_internal_heat_load_w: float
     sample_conductivity_w_m_k: float
@@ -145,7 +145,7 @@ def load_assumptions(path):
         baseline_nozzle_angle_deg=baseline["nozzle_angle_deg"],
         baseline_wall_thickness_mm=baseline["wall_thickness_mm"],
         baseline_sample_length_mm=baseline["sample_length_mm"],
-        min_sample_zone_mm=thermal["min_sample_zone_mm"],
+        sample_position_step_mm=thermal["sample_position_step_mm"],
         bath_cooling_power_w=thermal["bath_cooling_power_w"],
         sample_internal_heat_load_w=thermal["sample_internal_heat_load_w"],
         sample_conductivity_w_m_k=thermal["sample_conductivity_w_m_k"],

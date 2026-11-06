@@ -124,11 +124,12 @@ nozzle_count = 4
 nozzle_throat_mm = 0.3
 nozzle_angle_deg = 20.0        # from the rim tangent
 wall_thickness_mm = 0.5        # placeholder Rotor tube wall
-sample_length_mm = 5.0         # Sample packed from the Bottom Cap upward
+sample_length_mm = 5.0         # placed where its Sample Heat Load is lowest in the Placement Window
 
 [thermal]
 # The Stator is held at the Bath Temperature (placeholder).
-min_sample_zone_mm = 5.0
+sample_position_step_mm = 0.5     # Sample Positions scanned this far apart for the Placement Window;
+                                  # its edges are then bisected to 1/256 of this
 bath_cooling_power_w = 0.100
 sample_internal_heat_load_w = 0.0
 sample_conductivity_w_m_k = 0.1   # placeholder, no source yet

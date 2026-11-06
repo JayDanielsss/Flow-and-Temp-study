@@ -169,3 +169,20 @@ def test_feasible_probability_read_from_the_uncertainty_csv(tmp_path, baseline):
     assert feasible_probability(baseline, path) == 0.9
     other = evaluate(Design(rotor_length_mm=20.0, nozzle_count=8), load_assumptions(ASSUMPTIONS_FILE))
     assert feasible_probability(other, path) is None
+
+
+def test_sample_position_placement_window_and_standoffs_are_on_the_sheet(sheets, baseline):
+    _, rows = read_design_sheet(sheets["file"][0])
+    position = _row(rows, "Sample", "Sample Position")
+    assert float(position["operating"]) == pytest.approx(baseline.sample_position_mm, rel=1e-5)
+    assert float(position["feasible_min"]) == pytest.approx(baseline.placement_window_low_mm, abs=1e-6)
+    assert float(position["feasible_max"]) == pytest.approx(baseline.placement_window_high_mm, rel=1e-5)
+    assert position["source"] == MODEL_DERIVED
+    assert float(_row(rows, "Sample", "Bottom Standoff")["operating"]) == pytest.approx(
+        baseline.bottom_standoff_mm, abs=1e-6)
+    assert float(_row(rows, "Sample", "Turbine Cap Standoff")["operating"]) == pytest.approx(
+        baseline.turbine_cap_standoff_mm, rel=1e-5)
+    window = _row(rows, "Results", "Placement Window")
+    assert float(window["operating"]) == pytest.approx(
+        baseline.placement_window_high_mm - baseline.placement_window_low_mm, rel=1e-5)
+    assert "Sample's boundary" in _row(rows, "Results", "Sample Heat Load")["note"]

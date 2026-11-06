@@ -25,7 +25,8 @@ def assumptions():
 
 def test_assumptions_file_holds_spec_placeholders(assumptions):
     a = assumptions
-    assert a.min_sample_zone_mm == 5.0
+    assert a.sample_position_step_mm == 0.5
+    assert not hasattr(a, "min_sample_zone_mm")   # the Placement Window replaced the 5 mm Sample Zone
     assert a.bath_cooling_power_w == 0.100
     assert a.stator_allowance.wall == 1.5
     assert a.stator_allowance.nozzle_plenum == 2.0
@@ -81,7 +82,8 @@ def test_lower_bath_temperature_gives_a_colder_sample(assumptions):
 
 
 def test_sample_limit_sets_feasibility_and_sample_zone_but_not_the_temperatures(assumptions):
-    design = Design(rotor_length_mm=20.0)
+    # A fixed Sample Position, so the tighter limit cannot move the Sample.
+    design = Design(rotor_length_mm=20.0, sample_position_mm=5.0)
     base = evaluate(design, assumptions)
     # A limit just below the hottest point, still above the Bath: same profile, now infeasible.
     tight = evaluate(design, replace(assumptions,
@@ -89,7 +91,7 @@ def test_sample_limit_sets_feasibility_and_sample_zone_but_not_the_temperatures(
     assert tight.temperature_k == base.temperature_k
     assert tight.sample_zone_mm < base.sample_zone_mm
     assert not tight.feasible
-    assert tight.binding_constraint in ("Sample Zone", "Sample Temperature")
+    assert tight.binding_constraint in ("Placement Window", "Sample Temperature")
 
 
 def test_20mm_rotor_at_largest_diameter_fits_bore_and_is_feasible(assumptions):
@@ -197,29 +199,39 @@ def test_baseline_reports_temperature_profile_sample_zone_and_heat_load(assumpti
     assert results.sample_hottest_temperature_k <= 1.2
     assert set(results.sample_heat_load_breakdown_w) == HEAT_SOURCES
     assert results.sample_heat_load_w == pytest.approx(sum(results.sample_heat_load_breakdown_w.values()))
-    assert results.sample_heat_load_breakdown_w["turbine_cap_conduction"] > 0.0
+    assert results.sample_heat_load_breakdown_w["windage"] > 0.0
     assert results.feasible
 
 
-def test_rotor_too_short_for_5mm_sample_zone_is_ruled_out(assumptions):
-    results = evaluate(Design(rotor_length_mm=8.0), assumptions)
+def test_rotor_too_short_for_a_placement_window_is_ruled_out(assumptions):
+    # A 10 mm Rotor leaves 7 mm of body, so a 5 mm Sample always sits within 2 mm of the 10 K Turbine Cap.
+    results = evaluate(Design(rotor_length_mm=10.0), assumptions)
     assert results.fits_bore
-    assert results.sample_zone_mm < 5.0
+    assert math.isnan(results.placement_window_low_mm) and math.isnan(results.placement_window_high_mm)
+    assert results.sample_hottest_temperature_k > 1.2
     assert not results.feasible
-    assert results.binding_constraint == "Sample Zone"
+    assert results.binding_constraint == "Placement Window"
+
+
+def test_a_sample_that_does_not_fit_the_rotor_body_is_rejected(assumptions):
+    with pytest.raises(ValueError, match="does not fit"):
+        evaluate(Design(rotor_length_mm=8.0), assumptions)
+    with pytest.raises(ValueError, match="does not fit"):
+        evaluate(Design(rotor_length_mm=20.0, sample_position_mm=12.0), assumptions)
 
 
 def test_internal_load_in_poor_conductor_overheats_sample(assumptions):
     # Centre-to-wall rise of a uniformly heated cylinder: Q / (4 pi k L)
     #   = 1e-5 W / (4 pi * 1e-5 W/(m K) * 5e-3 m) = 15.9 K, far above 1.2 K,
-    # while 10 uW barely warms the wall, so the Sample Zone itself survives.
+    # while 10 uW barely warms the wall, so the Sample Zone itself survives. No Sample Position
+    # escapes the centre-line rise, so the Placement Window is empty.
     design = Design(rotor_length_mm=20.0, sample_internal_heat_load_w=1e-5,
                     sample_conductivity_w_m_k=1e-5)
     results = evaluate(design, assumptions)
     assert results.sample_zone_mm >= 5.0
     assert results.sample_hottest_temperature_k > 1.0 + 15.0
     assert not results.feasible
-    assert results.binding_constraint == "Sample Temperature"
+    assert results.binding_constraint == "Placement Window"
 
 
 def test_lower_sample_conductivity_gives_hotter_sample(assumptions):
@@ -228,9 +240,8 @@ def test_lower_sample_conductivity_gives_hotter_sample(assumptions):
     poor = evaluate(Design(rotor_length_mm=20.0, sample_internal_heat_load_w=1e-5,
                            sample_conductivity_w_m_k=0.01), assumptions)
     assert poor.sample_hottest_temperature_k > good.sample_hottest_temperature_k
-    # The lower pivot warms the Bottom Cap end, so the Sample's lowest slice can sit just below
-    # the Sample Zone; only the part inside the zone counts.
-    assert 0.9e-5 < poor.sample_heat_load_breakdown_w["internal_load"] <= 1e-5 * (1 + 1e-6)
+    # The internal load is generated inside the Sample's boundary, so all of it counts.
+    assert poor.sample_heat_load_breakdown_w["internal_load"] == pytest.approx(1e-5, rel=1e-9)
 
 
 def test_cooling_path_defaults_to_vapour_only_with_no_cold_support_terms(assumptions):
@@ -256,9 +267,11 @@ def test_cold_support_gap_shear_adds_to_drag_torque_and_sample_heat_load(assumpt
     assert cold.drag_torque_n_m == pytest.approx(vapour.drag_torque_n_m + cold.cold_support_drag_torque_n_m)
     assert cold.turbine_torque_n_m == pytest.approx(cold.drag_torque_n_m, rel=1e-3)
     assert cold.required_mass_flow_kg_s > vapour.required_mass_flow_kg_s
-    # All gap shear heat enters the Rotor at the placeholder windage_heat_to_rotor_fraction of 1.
+    # All gap shear heat enters the Rotor at the placeholder windage_heat_to_rotor_fraction of 1, at
+    # the Bottom Cap face; the Cold Support takes it straight back out, with heat from the Rotor
+    # besides, so at most that much can reach the Sample above the Bottom Cap.
     shear_heat = cold.cold_support_drag_torque_n_m * 2.0 * math.pi * 1000.0
-    assert cold.sample_heat_load_breakdown_w["cold_support_shear"] == pytest.approx(shear_heat)
+    assert 0.0 <= cold.sample_heat_load_breakdown_w["cold_support_shear"] <= shear_heat
     assert cold.cold_support_heat_to_bath_w > shear_heat
 
 
@@ -279,13 +292,16 @@ def test_windage_has_a_turbine_cap_term_in_drive_gas_and_a_body_term_in_vapour(a
 
 
 def test_body_windage_heat_goes_to_the_body_and_cap_heat_is_counted_at_the_turbine_cap(assumptions):
-    # A 21 K Sample Limit Temperature takes in the whole 17 mm body, so the zone collects every bit of
-    # windage heat applied below the Turbine Cap; at the placeholder fraction of 1 that is all of it.
+    # A 21 K Sample Limit Temperature takes in the whole 17 mm body. The body windage heat is
+    # spread evenly over it at the placeholder fraction of 1, so the 5 mm Sample takes at least its
+    # 5/17 share across its own side, and never more than all of it.
     wide = replace(assumptions, sample_limit_temperature_k=21.0)
     r = evaluate(Design(rotor_length_mm=20.0), wide)
     omega = 2.0 * math.pi * 1000.0
     assert r.sample_zone_mm == pytest.approx(17.0)
-    assert r.sample_heat_load_breakdown_w["windage"] == pytest.approx(r.body_windage_torque_n_m * omega, rel=1e-9)
+    body_heat = r.body_windage_torque_n_m * omega
+    # One grid cell (17/400 mm) either way at each end of the Sample.
+    assert 5.0 / 17.0 * body_heat * 0.98 <= r.sample_heat_load_breakdown_w["windage"] <= body_heat
     assert r.turbine_cap_windage_heat_w == pytest.approx(r.turbine_cap_windage_torque_n_m * omega, rel=1e-12)
 
 
@@ -320,11 +336,13 @@ def test_smaller_cold_support_gap_cools_sample_until_shear_heating_dominates(ass
     vapour = evaluate(Design(rotor_length_mm=20.0), assumptions).sample_hottest_temperature_k
     coolest = min(range(len(gaps_mm)), key=hottest.__getitem__)
     assert 0 < coolest < len(gaps_mm) - 1
-    # Wide gaps: each step smaller cools the Sample; the widest barely beats Vapour Cooling alone.
-    assert hottest[coolest:] == sorted(hottest[coolest:])
-    assert hottest[-1] < vapour
+    # Wide gaps: each step smaller cools the Sample (the widest gaps change it only at round-off,
+    # the Sample sitting well above the Bottom Cap); the widest barely beats Vapour Cooling alone.
+    steps = [b - a for a, b in zip(hottest, hottest[1:])]
+    assert all(step >= -1e-12 for step in steps[coolest:])
+    assert hottest[-1] <= vapour + 1e-12
     # Narrow gaps: shear heating grows faster than gap conduction and warms the Sample again.
-    assert hottest[:coolest + 1] == sorted(hottest[:coolest + 1], reverse=True)
+    assert all(step <= 1e-12 for step in steps[:coolest])
 
 
 def test_bearing_type_is_part_of_the_configuration(assumptions):
@@ -342,7 +360,8 @@ def test_unknown_bearing_type_is_rejected(assumptions):
 
 def test_each_bearing_reports_friction_stiffness_and_radial_space(assumptions):
     for bearing in (GAS, MECHANICAL, TWO_CENTER_PIVOT):
-        r = evaluate(Design(rotor_length_mm=20.0, bearing=bearing), assumptions)
+        # The Sample right on the Bottom Cap, next to the lower Bearing.
+        r = evaluate(Design(rotor_length_mm=20.0, bearing=bearing, sample_position_mm=0.0), assumptions)
         assert r.bearing_friction_torque_n_m > 0.0
         assert r.bearing_stiffness_n_m > 0.0
         assert r.bearing_radial_space_mm >= 0.0
@@ -407,11 +426,12 @@ def test_configurations_cover_every_allowed_combination_and_no_excluded_one():
 def test_bottom_cap_warmed_by_lower_pivot_leaves_a_cold_sample_zone_above_it(assumptions):
     # The solid zirconia Bottom Cap barely conducts at 1 K, so pivot friction warms its face
     # above the limit while the Rotor above stays cold: the Sample Zone need not start at z = 0.
-    r = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT), assumptions)
+    r = evaluate(Design(rotor_length_mm=20.0, bearing=TWO_CENTER_PIVOT, sample_position_mm=0.0), assumptions)
     assert r.temperature_k[0] > 1.2
     assert r.sample_zone_mm >= 5.0
     assert r.sample_hottest_temperature_k <= 1.2
     assert r.feasible
+    # On the Bottom Cap the Sample takes some of the friction heat conducted up through it.
     assert r.sample_heat_load_breakdown_w["bearing_friction"] > 0.0
     assert r.sample_heat_load_w == pytest.approx(sum(r.sample_heat_load_breakdown_w.values()))
 
@@ -510,12 +530,13 @@ def test_vented_gives_higher_bath_heat_load_than_ducted(assumptions):
 
 
 def test_vented_drive_gas_convects_onto_the_rotor_and_warms_it(assumptions):
-    # Drive Gas at 10 K washing the whole body is an upper bound: it leaves no Sample Zone.
+    # Drive Gas at 10 K washing the whole body is an upper bound: it leaves no Placement Window.
     vented = evaluate(Design(rotor_length_mm=20.0, exhaust_path=VENTED), assumptions)
     ducted = evaluate(Design(rotor_length_mm=20.0, exhaust_path=DUCTED), assumptions)
     assert min(vented.temperature_k) > min(ducted.temperature_k)
     assert vented.sample_hottest_temperature_k > ducted.sample_hottest_temperature_k
     assert vented.sample_zone_mm < ducted.sample_zone_mm
+    assert math.isnan(vented.placement_window_low_mm)
     assert not vented.feasible
 
 
@@ -645,16 +666,18 @@ def test_required_supply_pressure_beyond_the_limit_is_reported_infinite(assumpti
 
 # 10 K Drive Gas results recorded before the Supply Pressure search was capped at its limit,
 # re-recorded with the Turbine Cap windage term, and again for the 1.0 K Bath Temperature (its
-# 0.117 Torr Cold Space pressure lowers the body windage; Vented gas is cooled to 1.0 K vapour):
+# 0.117 Torr Cold Space pressure lowers the body windage; Vented gas is cooled to 1.0 K vapour),
+# with the Sample on the Bottom Cap as it then was. The 12 mm Rotors are now ruled out by an empty
+# Placement Window in place of the 5 mm Sample Zone:
 # (Rotor Length, Bearing, Exhaust Path, required Supply Pressure bar, mass flow kg/s, Bath Heat Load W,
 #  feasible, Binding Constraint).
 PINNED_10_K = [
     (20.0, TWO_CENTER_PIVOT, DUCTED, 0.05390626284447204, 3.1156131337941946e-06, 0.013222708337157251,
      True, "Sample Temperature"),
     (12.0, MECHANICAL, VENTED, 1.992195065430556, 0.00023514175608474377, 10.218698466560578,
-     False, "Sample Zone"),
+     False, "Placement Window"),
     (12.0, GAS, DUCTED, 0.3562988836600197, 4.084740685501619e-05, 0.24008093033143652,
-     False, "Sample Zone"),
+     False, "Placement Window"),
 ]
 
 
@@ -662,7 +685,8 @@ PINNED_10_K = [
 def test_10_k_drive_gas_results_unchanged(assumptions, length, bearing, exhaust, pressure, flow, bath,
                                           feasible, binding):
     design = Design(rotor_length_mm=length, bearing=bearing, pivot_to_bath=False, cooling_path=VAPOUR_ONLY,
-                    turbine=FLUTED_CAP, exhaust_path=exhaust, drive_gas_temperature_k=10.0)
+                    turbine=FLUTED_CAP, exhaust_path=exhaust, drive_gas_temperature_k=10.0,
+                    sample_position_mm=0.0)
     r = evaluate(design, assumptions)
     # The search resolves the Supply Pressure to 1e-6, so a changed bracket moves it within that.
     assert r.required_supply_pressure_bar == pytest.approx(pressure, rel=1e-5)
@@ -670,3 +694,64 @@ def test_10_k_drive_gas_results_unchanged(assumptions, length, bearing, exhaust,
     assert r.bath_heat_load_w == pytest.approx(bath, rel=1e-5)
     assert r.feasible == feasible
     assert r.binding_constraint == binding
+
+
+# --- Sample Position and Placement Window ---
+
+def test_default_sample_position_has_the_lowest_sample_heat_load_in_the_placement_window(assumptions):
+    r = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    lo, hi = r.placement_window_low_mm, r.placement_window_high_mm
+    assert 0.0 <= lo <= r.sample_position_mm <= hi <= 20.0 - 3.0 - 1.0 - 5.0
+    for position in (lo, (lo + r.sample_position_mm) / 2.0, (r.sample_position_mm + hi) / 2.0, hi):
+        fixed = evaluate(Design(rotor_length_mm=20.0, sample_position_mm=position), assumptions)
+        assert fixed.sample_position_mm == pytest.approx(position)
+        # The default is the lowest of the scanned positions, 0.5 mm apart, so a position between
+        # them can undercut it only by a sliver.
+        assert fixed.sample_heat_load_w >= r.sample_heat_load_w * (1.0 - 1e-3)
+
+
+def test_standoffs_are_the_placement_window_edges(assumptions):
+    # 17 mm body, 1 mm Bottom Cap, 5 mm Sample: the top of the Sample at the window's high edge
+    # sits 17 - 1 - 5 - high from the Turbine Cap.
+    r = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert r.bottom_standoff_mm == r.placement_window_low_mm
+    assert r.turbine_cap_standoff_mm == pytest.approx(11.0 - r.placement_window_high_mm)
+    assert r.turbine_cap_standoff_mm > 0.0
+    # The high edge is where the Sample's hottest point reaches the Sample Limit Temperature, to
+    # within one grid cell (17/400 mm) of the thermal model.
+    edge = evaluate(Design(rotor_length_mm=20.0, sample_position_mm=r.placement_window_high_mm), assumptions)
+    past = evaluate(Design(rotor_length_mm=20.0, sample_position_mm=r.placement_window_high_mm + 17.0 / 400),
+                    assumptions)
+    assert edge.sample_hottest_temperature_k <= 1.2 < past.sample_hottest_temperature_k
+
+
+def test_a_fixed_sample_position_outside_the_placement_window_is_ruled_out_by_its_temperature(assumptions):
+    base = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    r = evaluate(Design(rotor_length_mm=20.0, sample_position_mm=11.0), assumptions)
+    assert r.placement_window_high_mm == pytest.approx(base.placement_window_high_mm)
+    assert r.sample_position_mm == 11.0 > r.placement_window_high_mm
+    assert r.sample_hottest_temperature_k > 1.2
+    assert not r.feasible
+    assert r.binding_constraint == "Sample Temperature"
+
+
+def test_sample_heat_load_never_reads_zero_for_a_warm_sample(assumptions):
+    # #29: a 10 mm Rotor has no stretch at or below the limit, so heat into the old Sample Zone read
+    # zero. Measured at the Sample's own boundary it is the largest of all.
+    short = evaluate(Design(rotor_length_mm=10.0), assumptions)
+    long = evaluate(Design(rotor_length_mm=20.0), assumptions)
+    assert short.sample_zone_mm == 0.0
+    assert short.sample_heat_load_w > long.sample_heat_load_w > 0.0
+    assert short.sample_heat_load_breakdown_w["turbine_cap_conduction"] > 0.0
+
+
+def test_moving_the_sample_toward_the_turbine_cap_raises_its_hottest_point_and_heat_load(assumptions):
+    # From the default placement up to the top of the body, the Sample nears the 10 K Turbine Cap.
+    start = evaluate(Design(rotor_length_mm=20.0), assumptions).sample_position_mm
+    results = [evaluate(Design(rotor_length_mm=20.0, sample_position_mm=p), assumptions)
+               for p in (start, start + 2.0, start + 4.0, 11.0)]
+    hottest = [r.sample_hottest_temperature_k for r in results]
+    load = [r.sample_heat_load_w for r in results]
+    assert hottest == sorted(hottest) and len(set(hottest)) == len(hottest)
+    assert load == sorted(load) and len(set(load)) == len(load)
+    assert results[-1].sample_heat_load_breakdown_w["turbine_cap_conduction"] > 0.0

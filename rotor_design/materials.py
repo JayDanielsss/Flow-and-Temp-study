@@ -26,14 +26,14 @@ _MEASURED_K = np.array([1.344, 1.382, 1.344, 1.358, 1.315, 1.318, 1.327, 1.437, 
 
 
 def _zirconia_conductivity(temperature_k):
-    t = temperature_k
-    if t <= _T2_LIMIT_K:
-        return _T2_COEFFICIENT * t**2
-    if t < _MEASURED_T_K[0]:
-        t0, k0 = _T2_LIMIT_K, _T2_COEFFICIENT * _T2_LIMIT_K**2
-        t1, k1 = _MEASURED_T_K[0], _MEASURED_K[0]
-        return float(np.exp(np.interp(np.log(t), [np.log(t0), np.log(t1)], [np.log(k0), np.log(k1)])))
-    return float(np.interp(t, _MEASURED_T_K, _MEASURED_K))
+    """W/(m K) at a temperature, or elementwise over an array of them."""
+    t = np.asarray(temperature_k, dtype=float)
+    t0, k0 = _T2_LIMIT_K, _T2_COEFFICIENT * _T2_LIMIT_K**2
+    t1, k1 = _MEASURED_T_K[0], _MEASURED_K[0]
+    bridge = np.exp(np.interp(np.log(np.maximum(t, t0)), [np.log(t0), np.log(t1)], [np.log(k0), np.log(k1)]))
+    k = np.where(t <= _T2_LIMIT_K, _T2_COEFFICIENT * t**2,
+                 np.where(t < t1, bridge, np.interp(t, _MEASURED_T_K, _MEASURED_K)))
+    return float(k) if k.ndim == 0 else k
 
 
 @dataclass(frozen=True)
